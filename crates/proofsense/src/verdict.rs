@@ -9,6 +9,7 @@
 //! re-autoformalisation + in-kernel discharge; it is strictly stronger and
 //! must never be assigned by the evidence-grade path.
 
+use serde::Serialize;
 use std::fmt;
 
 /// A warrant's position in the obligation lattice, from weakest to
@@ -53,6 +54,14 @@ impl fmt::Display for TrustRung {
     }
 }
 
+/// Serialises as the exact SPEC §4 lattice string (e.g. `"warrant:entailed"`),
+/// matching [`fmt::Display`] rather than the Rust variant name.
+impl Serialize for TrustRung {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
 /// The outcome of an entailment check: does the target passage support the
 /// machine-English claim.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -78,11 +87,19 @@ impl fmt::Display for Judgement {
     }
 }
 
+/// Serialises as the exact data-contract string (e.g. `"not_entailed"`),
+/// matching [`fmt::Display`] rather than the Rust variant name.
+impl Serialize for Judgement {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
 /// A reviewable diagnostic for one warrant: the resolved target passage,
 /// the machine-English rendering of the checked declaration, the
 /// entailment judgement obtained between them, the resulting trust rung,
 /// and a rationale a human reviewer can audit.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct Verdict {
     /// Fully-qualified Lean declaration name.
     pub decl: String,

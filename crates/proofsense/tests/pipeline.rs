@@ -42,3 +42,22 @@ fn stub_entailment_yields_entailed_verdict() {
         .unwrap();
     assert!(matches!(j, proofsense::verdict::Judgement::Entailed));
 }
+
+#[test]
+fn end_to_end_stub_produces_entailed_verdict() {
+    let out = proofsense::run_check_for_test(
+        std::path::Path::new("tests/fixtures/manifest.json"),
+        std::path::Path::new("tests/fixtures/interior_h2.leaninfo.json"),
+        /*stub=*/ true,
+    )
+    .unwrap();
+    assert_eq!(out.len(), 1);
+    assert!(matches!(
+        out[0].trust_rung,
+        proofsense::verdict::TrustRung::Entailed | proofsense::verdict::TrustRung::Targeted
+    ));
+    assert_eq!(
+        out[0].decl,
+        "EllipticDirichlet.Regularity.interior_H2_estimate"
+    );
+}

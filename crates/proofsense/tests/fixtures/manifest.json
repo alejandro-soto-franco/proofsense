@@ -1,0 +1,13 @@
+{
+  "subject_imports": ["EllipticDirichlet.Regularity.Interior"],
+  "sources": [
+    { "id": "evans-2010", "content_list": "evans-6-3-1.content_list.json" }
+  ],
+  "warrants": [
+    {
+      "decl": "EllipticDirichlet.Regularity.interior_H2_estimate",
+      "source_id": "evans-2010",
+      "locator": "§6.3.1"
+    }
+  ]
+}
