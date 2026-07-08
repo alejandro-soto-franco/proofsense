@@ -1,0 +1,6 @@
+name = "proofsense-lean"
+defaultTargets = ["proofsense-lean"]
+
+[[lean_exe]]
+name = "proofsense-lean"
+root = "ProofsenseLean.Main"
