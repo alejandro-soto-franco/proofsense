@@ -9,6 +9,7 @@ delaborates its type, collects its axioms, and emits one JSON object:
 Pure metaprogramming; deterministic; no network, no LLM.
 -/
 import Lean
+import ProofsenseLean.Verbalize
 
 open Lean
 
@@ -61,14 +62,19 @@ def emit (env : Environment) (declStr : String) : IO Unit := do
   let (result, _) ← (do
     let axs ← Lean.collectAxioms declName
     let fmt ← (PrettyPrinter.ppExpr ci.type).run'
-    pure (axs, fmt) : CoreM (Array Name × Format)).toIO ctx st
-  let (axs, typeFmt) := result
+    -- Deterministic English rendering of the statement (faithful-by-construction,
+    -- with `ppExpr` fallback for unmatched subterms). Runs in `MetaM` on the
+    -- loaded env so binder-introduction and pretty-printing have a local context.
+    let english ← (Proofsense.Verbalize.verbalizeType ci.type).run'
+    pure (axs, fmt, english) : CoreM (Array Name × Format × String)).toIO ctx st
+  let (axs, typeFmt, typeEnglish) := result
   let typePp := toString typeFmt
   let sorryFree := !axs.contains ``sorryAx
   let axJson := Json.arr (axs.map (fun n => Json.str (toString n)))
   let obj := Json.mkObj [
     ("decl", Json.str declStr),
     ("type_pp", Json.str typePp),
+    ("type_english", Json.str typeEnglish),
     ("axioms", axJson),
     ("sorry_free", Json.bool sorryFree)]
   IO.println obj.compress

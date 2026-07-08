@@ -15,6 +15,12 @@ rev = "16a297f1108035c3a8174d68b052f92a991ea7bf"
 name = "EllipticDirichlet"
 path = "../../elliptic-pdes/lean"
 
+# Library over the ProofsenseLean modules so multi-file imports (Main →
+# Verbalize) are discovered and built.
+[[lean_lib]]
+name = "ProofsenseLean"
+globs = ["ProofsenseLean.+"]
+
 [[lean_exe]]
 name = "proofsense-lean"
 root = "ProofsenseLean.Main"
