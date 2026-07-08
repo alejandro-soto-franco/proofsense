@@ -4,4 +4,5 @@
 //! `proofsense` binary and the integration tests can use them.
 
 pub mod ingest;
+pub mod locator;
 pub mod manifest;
