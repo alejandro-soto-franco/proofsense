@@ -3,7 +3,9 @@
 //! This library exposes the orchestrator's building blocks so both the
 //! `proofsense` binary and the integration tests can use them.
 
+pub mod entail;
 pub mod ingest;
 pub mod lean;
 pub mod locator;
 pub mod manifest;
+pub mod verdict;

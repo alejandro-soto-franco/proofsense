@@ -23,7 +23,22 @@ fn resolve_section_locator() {
 fn parse_lean_decl_info() {
     let s = std::fs::read_to_string("tests/fixtures/interior_h2.leaninfo.json").unwrap();
     let info = proofsense::lean::parse_decl_info(s.trim()).unwrap();
-    assert_eq!(info.decl, "EllipticDirichlet.Regularity.interior_H2_estimate");
+    assert_eq!(
+        info.decl,
+        "EllipticDirichlet.Regularity.interior_H2_estimate"
+    );
     assert!(info.sorry_free);
     assert!(!info.type_english.is_empty());
+}
+
+#[test]
+fn stub_entailment_yields_entailed_verdict() {
+    use proofsense::entail::{Entailment, StubEntailment};
+    let (j, _r, _c) = StubEntailment::default()
+        .check(
+            "the second weak derivatives exist in L^2 with the bound",
+            "for every compact set the second weak derivative exists in L^2 ...",
+        )
+        .unwrap();
+    assert!(matches!(j, proofsense::verdict::Judgement::Entailed));
 }
