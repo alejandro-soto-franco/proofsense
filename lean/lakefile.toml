@@ -1,6 +1,23 @@
 name = "proofsense-lean"
 defaultTargets = ["proofsense-lean"]
 
+# Mathlib from the subject's personal fork at the exact rev, so proofsense-lean
+# is ABI-compatible with the subject's oleans and can importModules them.
+[[require]]
+name = "mathlib"
+git = "https://github.com/alejandro-soto-franco/mathlib4.git"
+rev = "16a297f1108035c3a8174d68b052f92a991ea7bf"
+
+# Path-require the (unmodified) subject project so its compiled Environment is
+# on the search path at `lake exe` time. Relative to lean/ this reaches
+# ~/elliptic-pdes/lean.
+[[require]]
+name = "EllipticDirichlet"
+path = "../../elliptic-pdes/lean"
+
 [[lean_exe]]
 name = "proofsense-lean"
 root = "ProofsenseLean.Main"
+# Loading the subject's env extensions (for notation delaborators) runs module
+# initializers via the interpreter, which requires interpreter support.
+supportInterpreter = true
