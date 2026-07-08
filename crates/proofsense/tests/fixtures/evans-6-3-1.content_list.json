@@ -1,0 +1,48 @@
+[
+  {
+    "type": "text",
+    "text": "6.3.1 Interior H^2-regularity",
+    "text_level": 1,
+    "bbox": [62, 120, 946, 150],
+    "page_idx": 316
+  },
+  {
+    "type": "text",
+    "text": "We consider first the interior regularity of weak solutions to the boundary-value problem, and establish that a weak solution belongs to H^2 on any compactly contained subdomain, with a quantitative estimate.",
+    "bbox": [62, 160, 946, 230],
+    "page_idx": 316
+  },
+  {
+    "type": "text",
+    "text": "THEOREM 1 (Interior H^2-regularity). Assume the coefficients a^{ij} are C^1 and f is in L^2. Suppose u in H_0^1(U) is a weak solution of the elliptic equation. Then u belongs to H_loc^2(U), and for each V compactly contained in U we have the estimate",
+    "bbox": [62, 240, 946, 340],
+    "page_idx": 316
+  },
+  {
+    "type": "equation",
+    "img_path": "images/evans-6-3-1-eq1.jpg",
+    "text": "$$\n\\|u\\|_{H^2(V)} \\le C\\left(\\|f\\|_{L^2(U)} + \\|u\\|_{L^2(U)}\\right)\n$$",
+    "text_format": "latex",
+    "bbox": [200, 350, 800, 400],
+    "page_idx": 316
+  },
+  {
+    "type": "text",
+    "text": "the constant C depending only on V, U and the coefficients of the operator.",
+    "bbox": [62, 410, 946, 440],
+    "page_idx": 316
+  },
+  {
+    "type": "text",
+    "text": "6.3.2 Boundary H^2-regularity",
+    "text_level": 1,
+    "bbox": [62, 470, 946, 500],
+    "page_idx": 318
+  },
+  {
+    "type": "text",
+    "text": "We turn next to regularity up to the boundary, which requires additional smoothness assumptions on the domain.",
+    "bbox": [62, 510, 946, 560],
+    "page_idx": 318
+  }
+]
