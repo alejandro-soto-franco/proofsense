@@ -14,7 +14,7 @@ rev = "16a297f1108035c3a8174d68b052f92a991ea7bf"
 [[require]]
 name = "EllipticPdes"
 git = "https://github.com/alejandro-soto-franco/EllipticPDE.git"
-rev = "0497b03b47ed21b248fb49f7e7c26829d9920c2a"
+rev = "03bfa9d093a1ca3d1cdca4a9f709671a9257b6c9"
 subDir = "lean"
 
 # Library over the ProofsenseLean modules so multi-file imports (Main →
