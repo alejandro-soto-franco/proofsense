@@ -1,12 +1,12 @@
 name = "proofsense-lean"
 defaultTargets = ["proofsense-lean"]
 
-# Mathlib from the subject's personal fork at the exact rev, so proofsense-lean
+# Upstream Mathlib at the exact rev the subject uses, so proofsense-lean
 # is ABI-compatible with the subject's oleans and can importModules them.
 [[require]]
 name = "mathlib"
-git = "https://github.com/alejandro-soto-franco/mathlib4.git"
-rev = "16a297f1108035c3a8174d68b052f92a991ea7bf"
+git = "https://github.com/leanprover-community/mathlib4.git"
+rev = "542645ab80a3ee3a715ad8610b8c0fdac58ba54c"
 
 # Require the (unmodified) subject project so its compiled Environment is on the
 # search path at `lake exe` time. A git require rather than a local path, so the
@@ -14,7 +14,7 @@ rev = "16a297f1108035c3a8174d68b052f92a991ea7bf"
 [[require]]
 name = "EllipticPdes"
 git = "https://github.com/alejandro-soto-franco/EllipticPDE.git"
-rev = "03bfa9d093a1ca3d1cdca4a9f709671a9257b6c9"
+rev = "7c3ebf21ac0b72f7cc2975fd41fc14a51eddd73d"
 subDir = "lean"
 
 # Library over the ProofsenseLean modules so multi-file imports (Main →
