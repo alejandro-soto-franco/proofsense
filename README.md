@@ -56,7 +56,7 @@ preference.
 | `EntailedFormal` | The passage was re-autoformalised and checked for equivalence. Still not unconditional: two-statement equivalence is undecidable in general. |
 | `Discharged` | A Lean proof of the declaration exists, so the English is generated from a kernel-checked term. |
 
-## What is guaranteed, and what is not
+## What is and isn't guaranteed
 
 Verbalisation is faithful by construction: the English is a direct function of
 the Lean declaration, so it cannot introduce claims the proof does not make.
