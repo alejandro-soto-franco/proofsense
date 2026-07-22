@@ -1,8 +1,8 @@
 //! Deterministic structural locator resolution: map a citation locator
 //! string (e.g. `"§6.3.1"`, `"6.3.1"`, `"Thm 8.8"`, `"Theorem 8.8"`) to the
 //! [`Passage`] whose structural locator names the same section/theorem
-//! number. This is a pure string-equality rule after normalisation — no
-//! embeddings, no semantic/fuzzy matching — so the result is reproducible
+//! number. This is a pure string-equality rule after normalisation, with no
+//! embeddings, no semantic/fuzzy matching, so the result is reproducible
 //! and auditable.
 //!
 //! # Normalisation rule

@@ -31,7 +31,7 @@ use verdict::{Judgement, TrustRung, Verdict};
 ///   `PROOFSENSE_ENABLE_LLM` so it never fires unless explicitly enabled).
 ///
 /// Trust rung per warrant: a locator that fails to resolve to any passage
-/// yields [`TrustRung::Bare`] (a citation only — see the honest-labelling
+/// yields [`TrustRung::Bare`] (a citation only, see the labelling
 /// rule in `verdict.rs`); a resolved passage with an [`Judgement::Entailed`]
 /// verdict yields [`TrustRung::Entailed`]; a resolved passage with any other
 /// judgement yields [`TrustRung::Targeted`] (a concrete target, unconfirmed).

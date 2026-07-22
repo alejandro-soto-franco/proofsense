@@ -1,10 +1,10 @@
 //! Verdict types: the trust-rung lattice, the entailment judgement, the
 //! per-warrant [`Verdict`] record, and human-readable report rendering.
 //!
-//! See the SPEC's "Trust model — the obligation lattice" (§4): every warrant
+//! See the SPEC's "Trust model: the obligation lattice" (§4): every warrant
 //! is labelled with exactly how strong its check is. `TrustRung::Entailed`
 //! is evidence-grade (default LLM-NLI against a faithful, deterministically
-//! generated operand) — never conflate it with a soundness proof.
+//! generated operand). Never conflate it with a soundness proof.
 //! `TrustRung::EntailedFormal` is reserved for the (future) round-trip
 //! re-autoformalisation + in-kernel discharge; it is strictly stronger and
 //! must never be assigned by the evidence-grade path.
@@ -15,22 +15,22 @@ use std::fmt;
 /// A warrant's position in the obligation lattice, from weakest to
 /// strongest. Mirrors SPEC §4 exactly:
 ///
-/// - [`TrustRung::Bare`] — a citation only; no target passage resolved.
-/// - [`TrustRung::Targeted`] — the locator resolved to a specific
+/// - [`TrustRung::Bare`]: a citation only; no target passage resolved.
+/// - [`TrustRung::Targeted`]: the locator resolved to a specific
 ///   transcribed passage (a concrete target), but no correspondence check
 ///   has been run yet.
-/// - [`TrustRung::Entailed`] — the passage was entailment-checked against
+/// - [`TrustRung::Entailed`]: the passage was entailment-checked against
 ///   the machine English and passed. **Evidence-grade**: the default is
 ///   LLM-NLI with the faithful operand pinned. This is evidence, not proof.
-/// - [`TrustRung::EntailedFormal`] — the passage was re-autoformalised and
+/// - [`TrustRung::EntailedFormal`]: the passage was re-autoformalised and
 ///   discharged equivalent to the decl in-kernel (**formal-evidence-grade**:
 ///   a round-trip check, Increment 2 of the plan). Stronger than
 ///   `Entailed`, still not an unconditional guarantee (two-statement
 ///   equivalence is undecidable in general).
-/// - [`TrustRung::Discharged`] — a Lean proof of the decl exists (the
+/// - [`TrustRung::Discharged`]: a Lean proof of the decl exists (the
 ///   machine English is generated from a kernel-checked term).
 ///
-/// Honest labelling is a hard requirement (SPEC §4): never assign a rung
+/// Accurate labelling is a hard requirement (SPEC §4): never assign a rung
 /// that overstates what was actually checked.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TrustRung {
@@ -117,8 +117,8 @@ pub struct Verdict {
     /// This warrant's rung in the obligation lattice.
     pub trust_rung: TrustRung,
     /// A one-line-or-so human-readable explanation of the judgement.
-    /// For [`crate::entail::StubEntailment`] this always says "stub" —
-    /// it is a test double, never a real check.
+    /// For [`crate::entail::StubEntailment`] this always says "stub",
+    /// since it is a test double, never a real check.
     pub rationale: String,
     /// The entailment judge's confidence in `[0.0, 1.0]`.
     pub confidence: f32,

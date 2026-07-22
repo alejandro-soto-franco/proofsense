@@ -3,10 +3,10 @@
 //! (the hypothesis).
 //!
 //! Two implementations:
-//! - [`StubEntailment`] — deterministic, lexical-overlap heuristic. Purely
+//! - [`StubEntailment`]: deterministic, lexical-overlap heuristic. Purely
 //!   a test double; its rationale always says "stub" and it is never
 //!   exercised against a real model.
-//! - [`LlmEntailment`] — a real NLI call to an LLM judge. Wired and
+//! - [`LlmEntailment`]: a real NLI call to an LLM judge. Wired and
 //!   compiles, but gated behind an env var so it is never invoked by
 //!   `cargo test`; tests must run fully offline.
 
@@ -42,7 +42,7 @@ const STOPWORDS: &[&str] = &[
 /// Tokenize `s` into its salient-token set: lowercase, split on any
 /// non-ASCII-alphanumeric character (so e.g. `"L^2"` yields `"l"` and
 /// `"2"`, and punctuation/whitespace disappear), then drop stopwords.
-/// Short domain tokens (single letters, digits) are kept — in this
+/// Short domain tokens (single letters, digits) are kept: in this
 /// domain's notation (norms, exponents, coefficient names) they carry
 /// meaning, so filtering by length would discard real signal.
 fn salient_tokens(s: &str) -> HashSet<String> {
@@ -65,17 +65,17 @@ fn salient_tokens(s: &str) -> HashSet<String> {
 /// `min_shared_salient_tokens` tokens, the result is
 /// [`Judgement::Entailed`]; otherwise it is [`Judgement::Uncertain`] (the
 /// stub has no way to detect contradiction, so it never returns
-/// [`Judgement::NotEntailed`] — weak or absent lexical overlap is treated
+/// [`Judgement::NotEntailed`]; weak or absent lexical overlap is treated
 /// as "can't tell", not "false"). Confidence is the fraction of the
 /// hypothesis's salient tokens found in the passage, clamped to `1.0`.
 ///
-/// The rationale always begins with `"stub:"` — this is a test double, not
+/// The rationale always begins with `"stub:"`, since this is a test double, not
 /// a real entailment check, and must never claim otherwise.
 #[derive(Debug, Clone)]
 pub struct StubEntailment {
     /// Minimum number of shared salient tokens for a verdict of
     /// [`Judgement::Entailed`]. Default (`3`) is chosen so that a genuinely
-    /// related passage/claim pair — sharing a handful of technical terms —
+    /// related passage/claim pair, sharing a handful of technical terms,
     /// clears the bar, while two unrelated sentences do not.
     pub min_shared_salient_tokens: usize,
 }
@@ -127,7 +127,7 @@ impl Entailment for StubEntailment {
 
 /// Env var that must be set (to any non-empty value) for [`LlmEntailment`]
 /// to actually perform a network call. Absent this, `check` returns an
-/// error immediately without touching the network — this is what keeps
+/// error immediately without touching the network, which is what keeps
 /// `cargo test` offline even though `LlmEntailment` is wired and compiled.
 const ENABLE_ENV_VAR: &str = "PROOFSENSE_ENABLE_LLM";
 
@@ -152,7 +152,7 @@ const ANTHROPIC_VERSION: &str = "2023-06-01";
 ///
 /// Rust has no official Anthropic SDK, so this speaks the Messages API
 /// directly over HTTP (`reqwest`, blocking). The call only happens when
-/// [`ENABLE_ENV_VAR`] is set — otherwise [`LlmEntailment::check`] returns
+/// [`ENABLE_ENV_VAR`] is set; otherwise [`LlmEntailment::check`] returns
 /// an error without making a request. This is what keeps `cargo test`
 /// fully offline: no test in this crate sets that env var, so this path
 /// is wired and compiled but never exercised.
@@ -255,7 +255,7 @@ impl Entailment for LlmEntailment {
     ) -> anyhow::Result<(Judgement, String, f32)> {
         // Gate: never perform a network call unless explicitly enabled.
         // This is the whole reason `cargo test` stays offline with this
-        // backend wired in — no test sets this env var.
+        // backend wired in, and no test sets this env var.
         if env::var(ENABLE_ENV_VAR)
             .map(|v| v.is_empty())
             .unwrap_or(true)
@@ -344,7 +344,7 @@ mod tests {
 
     #[test]
     fn stub_never_calls_network_and_rationale_says_stub() {
-        // Purely a sanity check that the rationale is honest about being a
+        // Purely a sanity check that the rationale states plainly that it is a
         // test double, per the "never claim a real check" constraint.
         let (_, r, _) = StubEntailment::default().check("x", "y").unwrap();
         assert!(r.contains("stub"));

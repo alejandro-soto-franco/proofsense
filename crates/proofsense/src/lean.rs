@@ -34,9 +34,20 @@ pub fn parse_decl_info(json_line: &str) -> anyhow::Result<LeanDeclInfo> {
 /// `lean_dir`, capture stdout, and parse its last non-empty line as a
 /// [`LeanDeclInfo`]. A non-zero exit status (or spawn failure) surfaces as an
 /// `anyhow` error carrying stderr.
-pub fn extract_decl(lean_dir: &Path, decl: &str, imports: &[String]) -> anyhow::Result<LeanDeclInfo> {
+pub fn extract_decl(
+    lean_dir: &Path,
+    decl: &str,
+    imports: &[String],
+) -> anyhow::Result<LeanDeclInfo> {
     let output = Command::new("lake")
-        .args(["exe", "proofsense-lean", "--decl", decl, "--imports", &imports.join(",")])
+        .args([
+            "exe",
+            "proofsense-lean",
+            "--decl",
+            decl,
+            "--imports",
+            &imports.join(","),
+        ])
         .current_dir(lean_dir)
         .output()
         .with_context(|| {
@@ -60,11 +71,7 @@ pub fn extract_decl(lean_dir: &Path, decl: &str, imports: &[String]) -> anyhow::
         .lines()
         .rev()
         .find(|line| !line.trim().is_empty())
-        .with_context(|| {
-            format!(
-                "lake exe proofsense-lean produced no output for decl {decl}"
-            )
-        })?;
+        .with_context(|| format!("lake exe proofsense-lean produced no output for decl {decl}"))?;
 
     parse_decl_info(last_line.trim())
 }
