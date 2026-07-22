@@ -25,6 +25,11 @@ reading table. Any subterm no rule matches is rendered verbatim through
 `ppExpr`, so the fold is total: it degrades to less English, never to a different
 claim. It is pure metaprogramming, with no network and no model involved.
 
+The fold keeps every binder the statement refers to. A `Prop` hypothesis reads as
+an implication only when the body does not mention it; when the body projects out
+of it, the hypothesis is named instead, so no identifier appears in the English
+without having been introduced.
+
 The judge therefore never writes the claim. It only decides whether the source
 supports a claim derived mechanically from the term under check. A wrong
 judgement stays a wrong judgement; it cannot become a wrong reading of the Lean.

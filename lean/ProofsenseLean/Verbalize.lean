@@ -33,18 +33,22 @@ mutual
     symbol; unmatched subterms fall back to `pp` (verbatim `ppExpr`). -/
 partial def verbalizeType (e : Expr) : MetaM String := do
   match e with
-  -- Universal / implication: `∀`. A `Prop` domain reads as an implication
-  -- ("if … then …") since the hypothesis is proof-irrelevant; a data domain
-  -- reads as a genuine universal ("for all x : T, …").
+  -- Universal / implication: `∀`.
   | .forallE n dom body bi =>
-    if ← isProp dom then
+    -- A `Prop` domain reads as an implication ONLY when the body does not
+    -- mention the binder. If it does, the hypothesis is being used as data
+    -- (`h.field`, `h.property`), and dropping the name would leave that name
+    -- free in the rendering: no longer a faithful reading of the term. Bind it
+    -- instead. `hasLooseBVar 0` is the dependence test, asked before
+    -- instantiation.
+    if (← isProp dom) && !body.hasLooseBVar 0 then
       withLocalDecl n bi dom fun x => do
         let d ← verbalizeType dom
         let b ← verbalizeType (body.instantiate1 x)
         return s!"if {d}, then {b}"
     else
       withLocalDecl n bi dom fun x => do
-        let dS ← pp dom
+        let dS ← if ← isProp dom then verbalizeType dom else pp dom
         let b ← verbalizeType (body.instantiate1 x)
         return s!"for all {n.eraseMacroScopes} : {dS}, {b}"
   | _ =>
