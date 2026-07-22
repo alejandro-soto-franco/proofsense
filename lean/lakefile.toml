@@ -8,12 +8,14 @@ name = "mathlib"
 git = "https://github.com/alejandro-soto-franco/mathlib4.git"
 rev = "16a297f1108035c3a8174d68b052f92a991ea7bf"
 
-# Path-require the (unmodified) subject project so its compiled Environment is
-# on the search path at `lake exe` time. Relative to lean/ this reaches
-# ~/elliptic-pdes/lean.
+# Require the (unmodified) subject project so its compiled Environment is on the
+# search path at `lake exe` time. A git require rather than a local path, so the
+# worked example resolves for anyone who clones this repository.
 [[require]]
-name = "EllipticDirichlet"
-path = "../../elliptic-pdes/lean"
+name = "EllipticPdes"
+git = "https://github.com/alejandro-soto-franco/EllipticPDE.git"
+rev = "0497b03b47ed21b248fb49f7e7c26829d9920c2a"
+subDir = "lean"
 
 # Library over the ProofsenseLean modules so multi-file imports (Main →
 # Verbalize) are discovered and built.

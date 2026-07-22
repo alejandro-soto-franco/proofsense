@@ -25,7 +25,7 @@ fn parse_lean_decl_info() {
     let info = proofsense::lean::parse_decl_info(s.trim()).unwrap();
     assert_eq!(
         info.decl,
-        "EllipticDirichlet.Regularity.interior_H2_estimate"
+        "EllipticPdes.Regularity.interior_H2_estimate"
     );
     assert!(info.sorry_free);
     assert!(!info.type_english.is_empty());
@@ -58,6 +58,6 @@ fn end_to_end_stub_produces_entailed_verdict() {
     ));
     assert_eq!(
         out[0].decl,
-        "EllipticDirichlet.Regularity.interior_H2_estimate"
+        "EllipticPdes.Regularity.interior_H2_estimate"
     );
 }

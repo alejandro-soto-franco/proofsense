@@ -107,10 +107,12 @@ Entailment backends:
 
 ## Worked example
 
-The fixtures check `EllipticDirichlet.Regularity.interior_H2_estimate`, the
-interior H2 estimate from a Lean formalisation of the linear elliptic Dirichlet
-problem, against Evans, *Partial Differential Equations*, section 6.3.1, the
-textbook result it claims to formalise.
+The fixtures check `EllipticPdes.Regularity.interior_H2_estimate`, the interior
+H2 estimate from
+[EllipticPDE](https://github.com/alejandro-soto-franco/EllipticPDE), against
+Evans, *Partial Differential Equations*, section 6.3.1, the textbook result it
+claims to formalise. The subject project is a git dependency of the Lean side, so
+the example resolves from a clean clone.
 
 ## Status
 
