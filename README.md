@@ -105,7 +105,14 @@ Entailment backends:
 
 - `StubEntailment`: a deterministic lexical-overlap heuristic. A test double, not
   a real check. Its rationale always begins with `stub:`, so a stub verdict can
-  never be mistaken for a judged one.
+  never be mistaken for a judged one. Measured over 15 warrants drawn from a
+  single textbook, it separates a declaration from a different *chapter*
+  (4 of 4 correctly refused) and fails completely within a chapter: pointed at a
+  neighbouring section of the same theory it returned `entailed` 3 times out of 3,
+  with a confidence distribution indistinguishable from the true matches (0.39
+  against 0.39). Neighbouring results share their whole technical vocabulary, so
+  lexical overlap carries no signal there. That regime is the one that matters,
+  and it is what the real judge is for.
 - `LlmEntailment`: an NLI call to an LLM judge, speaking the Anthropic Messages
   API directly. Gated behind `PROOFSENSE_ENABLE_LLM`, which is what keeps the
   test suite fully offline: no test sets that variable.
