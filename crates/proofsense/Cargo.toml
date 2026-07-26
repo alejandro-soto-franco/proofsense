@@ -3,6 +3,8 @@ name = "proofsense"
 version = "0.1.0"
 edition = "2021"
 license = "Apache-2.0"
+description = "Proof-linting against reviewable literature"
+repository = "https://github.com/alejandro-soto-franco/proofsense"
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
