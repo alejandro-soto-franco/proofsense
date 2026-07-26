@@ -1,6 +1,8 @@
-//! Entailment backend: check whether a literature passage (the premise)
-//! entails a machine-English rendering of a Lean declaration's statement
-//! (the hypothesis).
+//! Entailment backends: answer, separately, whether a literature passage
+//! entails a machine-English rendering of a Lean declaration's statement,
+//! and whether that rendering entails the passage. Neither backend
+//! classifies the relation between the two answers; that derivation lives
+//! in [`crate::verdict::Relation::derive`].
 //!
 //! Two implementations:
 //! - [`StubEntailment`]: deterministic, lexical-overlap heuristic. Purely
@@ -203,7 +205,7 @@ impl LlmEntailment {
 
     /// Ask the judge whether `premise` entails `hypothesis`, one direction at
     /// a time.
-    pub fn ask(&self, premise: &str, hypothesis: &str) -> anyhow::Result<Directional> {
+    fn ask(&self, premise: &str, hypothesis: &str) -> anyhow::Result<Directional> {
         // Gate: never perform a network call unless explicitly enabled.
         // This is the whole reason `cargo test` stays offline with this
         // backend wired in, and no test sets this env var.

@@ -42,6 +42,32 @@ pub fn run_check(
     lean_dir: &Path,
     stub: bool,
 ) -> anyhow::Result<Vec<Verdict>> {
+    let entailment: Box<dyn Entailment> = if stub {
+        Box::new(StubEntailment::default())
+    } else {
+        Box::new(LlmEntailment::from_env()?)
+    };
+    run_check_with(
+        manifest_path,
+        lean_info_override,
+        lean_dir,
+        entailment.as_ref(),
+    )
+}
+
+/// Core of [`run_check`], with the entailment backend supplied by the caller.
+///
+/// Exposed so tests can drive the pipeline with a backend the stub cannot
+/// impersonate. [`entail::StubEntailment`] is symmetric by construction, so
+/// without this seam nothing can tell a correct direction order from a
+/// transposed one. Not part of the supported API.
+#[doc(hidden)]
+pub fn run_check_with(
+    manifest_path: &Path,
+    lean_info_override: Option<&Path>,
+    lean_dir: &Path,
+    entailment: &dyn Entailment,
+) -> anyhow::Result<Vec<Verdict>> {
     let raw = std::fs::read_to_string(manifest_path)
         .with_context(|| format!("reading manifest {}", manifest_path.display()))?;
     let manifest: Manifest = serde_json::from_str(&raw)
@@ -53,12 +79,6 @@ pub fn run_check(
     // identically whether invoked from the crate root (as `cargo test`
     // does) or from the workspace root (as `cargo run` does).
     let manifest_dir = manifest_path.parent().unwrap_or_else(|| Path::new("."));
-
-    let entailment: Box<dyn Entailment> = if stub {
-        Box::new(StubEntailment::default())
-    } else {
-        Box::new(LlmEntailment::from_env()?)
-    };
 
     let mut verdicts = Vec::with_capacity(manifest.warrants.len());
     for warrant in &manifest.warrants {
