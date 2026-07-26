@@ -84,6 +84,20 @@ Results are only as good as three components proofsense does not itself verify:
 A false negative or false positive in any of the three propagates into
 proofsense's output.
 
+## Requirements
+
+`proofsense check` elaborates the Lean declaration by spawning `lake exe
+proofsense-lean` from the Lake project under `lean/`, so a Lean 4 toolchain and
+that project must both be present. A downloaded release binary carries neither.
+
+`--lean-info decl.json` is the one route that needs no Lean toolchain. It reads
+a declaration record captured earlier by whoever did have Lean available, as
+emitted by `lake exe proofsense-lean`.
+
+`--stub` is a separate axis: it selects the deterministic lexical judge over the
+LLM one, so it removes the network and the API key, and has no bearing on
+whether Lean is spawned.
+
 ## Usage
 
 A manifest names the sources, the Lean imports to elaborate under, and the
