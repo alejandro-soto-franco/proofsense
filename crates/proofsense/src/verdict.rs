@@ -9,6 +9,7 @@
 //! re-autoformalisation + in-kernel discharge; it is strictly stronger and
 //! must never be assigned by the evidence-grade path.
 
+use crate::manifest::Claim;
 use serde::Serialize;
 use std::fmt;
 
@@ -92,6 +93,131 @@ impl fmt::Display for Judgement {
 impl Serialize for Judgement {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         serializer.serialize_str(&self.to_string())
+    }
+}
+
+/// One directional entailment answer: does the premise the judge was given
+/// entail the hypothesis it was given. The judge is asked this twice with the
+/// operands swapped; it is never asked to classify the relation itself.
+#[derive(Debug, Clone, Serialize)]
+pub struct Directional {
+    /// Whether the premise entails the hypothesis.
+    pub holds: bool,
+    /// The judge's confidence in `[0.0, 1.0]`.
+    pub confidence: f32,
+    /// A one-line explanation a human reviewer can audit.
+    pub rationale: String,
+}
+
+/// How a declaration stands to the passage it cites. Derived from the two
+/// directional answers, never asked for directly.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Relation {
+    /// Each entails the other: the declaration states the cited result.
+    Equivalent,
+    /// The source entails the declaration only: the declaration is a special
+    /// case of the cited result, so citing it unqualified understates the
+    /// source and overstates the declaration's generality.
+    DeclSpecialises,
+    /// The declaration entails the source only: the declaration claims more
+    /// than the source supports. Unsound under either claim.
+    DeclExceeds,
+    /// Neither direction holds: the passage does not establish the claim.
+    Divergent,
+    /// At least one direction came back below the judge's confidence floor.
+    Undetermined,
+}
+
+impl fmt::Display for Relation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            Relation::Equivalent => "equivalent",
+            Relation::DeclSpecialises => "decl_specialises",
+            Relation::DeclExceeds => "decl_exceeds",
+            Relation::Divergent => "divergent",
+            Relation::Undetermined => "undetermined",
+        };
+        f.write_str(s)
+    }
+}
+
+/// Serialises as the data-contract string (e.g. `"decl_specialises"`),
+/// matching [`fmt::Display`] rather than the Rust variant name.
+impl Serialize for Relation {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
+impl Relation {
+    /// Derive the relation from the two directional answers. `floor` is the
+    /// judge's confidence floor: if either direction is answered below it, the
+    /// relation is [`Relation::Undetermined`] regardless of the answers.
+    pub fn derive(
+        source_entails_decl: &Directional,
+        decl_entails_source: &Directional,
+        floor: f32,
+    ) -> Relation {
+        if source_entails_decl.confidence < floor || decl_entails_source.confidence < floor {
+            return Relation::Undetermined;
+        }
+        match (source_entails_decl.holds, decl_entails_source.holds) {
+            (true, true) => Relation::Equivalent,
+            (true, false) => Relation::DeclSpecialises,
+            (false, true) => Relation::DeclExceeds,
+            (false, false) => Relation::Divergent,
+        }
+    }
+}
+
+/// A positive finding about a warrant, kept separate from the rung so that
+/// [`TrustRung`] stays a monotone strength label and a finding of
+/// misattribution never has to present itself as weak evidence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Defect {
+    /// The declaration is weaker than the result it cites.
+    Understated,
+    /// The declaration is stronger than the source supports.
+    Overclaimed,
+    /// Neither direction holds, so the citation establishes nothing.
+    Unsupported,
+}
+
+impl fmt::Display for Defect {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            Defect::Understated => "understated",
+            Defect::Overclaimed => "overclaimed",
+            Defect::Unsupported => "unsupported",
+        };
+        f.write_str(s)
+    }
+}
+
+/// Serialises as the data-contract string (e.g. `"understated"`), matching
+/// [`fmt::Display`] rather than the Rust variant name.
+impl Serialize for Defect {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
+/// Map a warrant's claim and its derived relation onto a trust rung and, when
+/// there is one, a defect.
+///
+/// A locator that fails to resolve never reaches this function: it yields
+/// [`TrustRung::Bare`] at the call site, because there is no passage against
+/// which any relation could be derived.
+pub fn classify(claim: Claim, relation: Relation) -> (TrustRung, Option<Defect>) {
+    match (claim, relation) {
+        (_, Relation::Equivalent) => (TrustRung::Entailed, None),
+        (Claim::FollowsFrom, Relation::DeclSpecialises) => (TrustRung::Entailed, None),
+        (Claim::Formalises, Relation::DeclSpecialises) => {
+            (TrustRung::Targeted, Some(Defect::Understated))
+        }
+        (_, Relation::DeclExceeds) => (TrustRung::Targeted, Some(Defect::Overclaimed)),
+        (_, Relation::Divergent) => (TrustRung::Targeted, Some(Defect::Unsupported)),
+        (_, Relation::Undetermined) => (TrustRung::Targeted, None),
     }
 }
 
@@ -191,5 +317,109 @@ mod tests {
         assert!(report.contains("entailed"));
         assert!(report.contains("the passage text"));
         assert!(report.contains("the machine english"));
+    }
+
+    fn dir(holds: bool, confidence: f32) -> Directional {
+        Directional {
+            holds,
+            confidence,
+            rationale: "t".to_string(),
+        }
+    }
+
+    #[test]
+    fn relation_derives_from_the_pair_of_directions() {
+        assert_eq!(
+            Relation::derive(&dir(true, 0.9), &dir(true, 0.9), 0.5),
+            Relation::Equivalent
+        );
+        assert_eq!(
+            Relation::derive(&dir(true, 0.9), &dir(false, 0.9), 0.5),
+            Relation::DeclSpecialises
+        );
+        assert_eq!(
+            Relation::derive(&dir(false, 0.9), &dir(true, 0.9), 0.5),
+            Relation::DeclExceeds
+        );
+        assert_eq!(
+            Relation::derive(&dir(false, 0.9), &dir(false, 0.9), 0.5),
+            Relation::Divergent
+        );
+    }
+
+    #[test]
+    fn either_direction_below_the_floor_is_undetermined() {
+        assert_eq!(
+            Relation::derive(&dir(true, 0.4), &dir(true, 0.9), 0.5),
+            Relation::Undetermined
+        );
+        assert_eq!(
+            Relation::derive(&dir(true, 0.9), &dir(false, 0.4), 0.5),
+            Relation::Undetermined
+        );
+    }
+
+    #[test]
+    fn a_zero_floor_never_yields_undetermined() {
+        assert_eq!(
+            Relation::derive(&dir(true, 0.0), &dir(true, 0.0), 0.0),
+            Relation::Equivalent
+        );
+    }
+
+    #[test]
+    fn specialisation_is_a_defect_only_under_the_formalises_claim() {
+        assert_eq!(
+            classify(Claim::Formalises, Relation::DeclSpecialises),
+            (TrustRung::Targeted, Some(Defect::Understated))
+        );
+        assert_eq!(
+            classify(Claim::FollowsFrom, Relation::DeclSpecialises),
+            (TrustRung::Entailed, None)
+        );
+    }
+
+    #[test]
+    fn exceeding_the_source_is_a_defect_under_both_claims() {
+        assert_eq!(
+            classify(Claim::Formalises, Relation::DeclExceeds),
+            (TrustRung::Targeted, Some(Defect::Overclaimed))
+        );
+        assert_eq!(
+            classify(Claim::FollowsFrom, Relation::DeclExceeds),
+            (TrustRung::Targeted, Some(Defect::Overclaimed))
+        );
+    }
+
+    #[test]
+    fn equivalence_reaches_entailed_and_divergence_does_not() {
+        assert_eq!(
+            classify(Claim::Formalises, Relation::Equivalent),
+            (TrustRung::Entailed, None)
+        );
+        assert_eq!(
+            classify(Claim::Formalises, Relation::Divergent),
+            (TrustRung::Targeted, Some(Defect::Unsupported))
+        );
+    }
+
+    #[test]
+    fn undetermined_is_targeted_without_a_defect() {
+        assert_eq!(
+            classify(Claim::Formalises, Relation::Undetermined),
+            (TrustRung::Targeted, None)
+        );
+    }
+
+    #[test]
+    fn relation_and_defect_display_as_the_data_contract_strings() {
+        assert_eq!(Relation::Equivalent.to_string(), "equivalent");
+        assert_eq!(Relation::DeclSpecialises.to_string(), "decl_specialises");
+        assert_eq!(Relation::DeclExceeds.to_string(), "decl_exceeds");
+        assert_eq!(Relation::Divergent.to_string(), "divergent");
+        assert_eq!(Relation::Undetermined.to_string(), "undetermined");
+        assert_eq!(Defect::Understated.to_string(), "understated");
+        assert_eq!(Defect::Overclaimed.to_string(), "overclaimed");
+        assert_eq!(Defect::Unsupported.to_string(), "unsupported");
     }
 }
