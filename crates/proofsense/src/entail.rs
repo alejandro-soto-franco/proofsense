@@ -155,9 +155,22 @@ const API_KEY_ENV_VAR: &str = "ANTHROPIC_API_KEY";
 const ENDPOINT_ENV_VAR: &str = "PROOFSENSE_LLM_ENDPOINT";
 const DEFAULT_ENDPOINT: &str = "https://api.anthropic.com/v1/messages";
 
-/// Model override env var; defaults to Claude Opus 4.8 when unset.
+/// Model override env var; defaults to Claude Opus 5 when unset.
 const MODEL_ENV_VAR: &str = "PROOFSENSE_LLM_MODEL";
-const DEFAULT_MODEL: &str = "claude-opus-4-8";
+const DEFAULT_MODEL: &str = "claude-opus-5";
+
+/// Effort override env var; defaults to the API's own default level.
+const EFFORT_ENV_VAR: &str = "PROOFSENSE_LLM_EFFORT";
+const DEFAULT_EFFORT: &str = "high";
+
+/// Output budget. On Claude Opus 5 thinking runs by default and `max_tokens`
+/// bounds thinking and response text together, so this has to leave room for
+/// both. 16000 is the documented non-streaming default.
+const MAX_TOKENS: u32 = 16000;
+
+/// Default confidence floor for the LLM judge. Below this, a direction is
+/// treated as undecided and the relation is `Undetermined`.
+const DEFAULT_CONFIDENCE_FLOOR: f32 = 0.5;
 
 const ANTHROPIC_VERSION: &str = "2023-06-01";
 
@@ -175,10 +188,13 @@ const ANTHROPIC_VERSION: &str = "2023-06-01";
 pub struct LlmEntailment {
     /// Messages API endpoint URL.
     pub endpoint: String,
-    /// Model id to request (e.g. `"claude-opus-4-8"`).
+    /// Model id to request (e.g. `"claude-opus-5"`).
     pub model: String,
     /// API key, sent as the `x-api-key` header.
     pub api_key: String,
+    /// Effort level, sent explicitly on every request so the recorded value is
+    /// never inferred from an absent field.
+    pub effort: String,
     /// The confidence below which this backend's answers are treated as
     /// undecided.
     pub confidence_floor: f32,
@@ -187,7 +203,8 @@ pub struct LlmEntailment {
 impl LlmEntailment {
     /// Build an [`LlmEntailment`] from the environment: `endpoint` from
     /// [`ENDPOINT_ENV_VAR`] (default [`DEFAULT_ENDPOINT`]), `model` from
-    /// [`MODEL_ENV_VAR`] (default [`DEFAULT_MODEL`]), and `api_key` from
+    /// [`MODEL_ENV_VAR`] (default [`DEFAULT_MODEL`]), `effort` from
+    /// [`EFFORT_ENV_VAR`] (default [`DEFAULT_EFFORT`]), and `api_key` from
     /// [`API_KEY_ENV_VAR`] (required). This reads env vars but performs no
     /// network I/O.
     pub fn from_env() -> anyhow::Result<Self> {
@@ -195,16 +212,17 @@ impl LlmEntailment {
             .with_context(|| format!("{API_KEY_ENV_VAR} is not set; required for LlmEntailment"))?;
         let endpoint = env::var(ENDPOINT_ENV_VAR).unwrap_or_else(|_| DEFAULT_ENDPOINT.to_string());
         let model = env::var(MODEL_ENV_VAR).unwrap_or_else(|_| DEFAULT_MODEL.to_string());
+        let effort = env::var(EFFORT_ENV_VAR).unwrap_or_else(|_| DEFAULT_EFFORT.to_string());
         Ok(Self {
             endpoint,
             model,
             api_key,
-            confidence_floor: 0.5,
+            effort,
+            confidence_floor: DEFAULT_CONFIDENCE_FLOOR,
         })
     }
 
-    /// Ask the judge whether `premise` entails `hypothesis`, one direction at
-    /// a time.
+    /// Ask one directional question: does `premise` entail `hypothesis`.
     fn ask(&self, premise: &str, hypothesis: &str) -> anyhow::Result<Directional> {
         // Gate: never perform a network call unless explicitly enabled.
         // This is the whole reason `cargo test` stays offline with this
@@ -219,15 +237,7 @@ impl LlmEntailment {
             );
         }
 
-        let prompt = build_prompt(premise, hypothesis);
-        let request = MessagesRequest {
-            model: &self.model,
-            max_tokens: 1024,
-            messages: vec![MessageParam {
-                role: "user",
-                content: prompt,
-            }],
-        };
+        let request = build_request(&self.model, &self.effort, premise, hypothesis);
 
         let client = reqwest::blocking::Client::new();
         let response = client
@@ -249,55 +259,87 @@ impl LlmEntailment {
             .json()
             .context("LlmEntailment: failed to parse Messages API response JSON")?;
 
-        let text_block = parsed
-            .content
-            .into_iter()
-            .find(|b| b.block_type == "text")
-            .context("LlmEntailment: response had no text content block")?;
-
-        let reply: DirectionalReply =
-            serde_json::from_str(text_block.text.trim()).with_context(|| {
-                format!(
-                    "LlmEntailment: judge reply was not the expected JSON: {}",
-                    text_block.text
-                )
-            })?;
-
-        Ok(Directional {
-            holds: reply.holds,
-            confidence: reply.confidence.clamp(0.0, 1.0),
-            rationale: reply.rationale,
-        })
+        directional_from_response(parsed)
     }
 }
 
-/// Strict NLI prompt: instructs the judge to decide entailment between a
-/// literature passage (premise) and a machine-English statement rendering
-/// (hypothesis), and to reply with exactly one line of JSON so the
-/// response is mechanically parseable. Asks about a single direction only;
-/// the caller swaps the operands to ask about the other.
+/// The directional NLI prompt. One template, used for both directions by
+/// swapping the operands, so a run has exactly one prompt hash to record.
+const PROMPT_TEMPLATE: &str = "You are a strict natural-language-inference judge for a \
+     proof-linting tool. You are given a PREMISE and a HYPOTHESIS. Decide whether the \
+     PREMISE entails the HYPOTHESIS: does the premise support every claim the hypothesis \
+     makes, with no unsupported strengthening. Answer only about this direction. Do not \
+     consider whether the hypothesis entails the premise.\n\n\
+     PREMISE:\n{premise}\n\nHYPOTHESIS:\n{hypothesis}\n";
+
+/// SHA-256 of [`PROMPT_TEMPLATE`], recorded in every report. A prompt change
+/// changes verdicts, so it has to be visible in the provenance.
+pub static PROMPT_TEMPLATE_SHA256: std::sync::LazyLock<String> =
+    std::sync::LazyLock::new(|| crate::hash::sha256_hex(PROMPT_TEMPLATE.as_bytes()));
+
 fn build_prompt(premise: &str, hypothesis: &str) -> String {
-    format!(
-        "You are a strict natural-language-inference judge for a proof-linting \
-         tool. You are given a PREMISE (a transcribed passage from a literature \
-         source, or a machine-generated English rendering of a formally verified \
-         mathematical statement) and a HYPOTHESIS (the other of the two). Decide \
-         whether the PREMISE entails the HYPOTHESIS: does the PREMISE support \
-         every claim the HYPOTHESIS makes, with no unsupported strengthening. You \
-         are being asked about this one direction only; the reverse direction, if \
-         wanted, is asked separately with the operands swapped.\n\n\
-         Respond with EXACTLY one line of JSON and nothing else, matching this \
-         shape: {{\"holds\": true | false, \"rationale\": \"<one sentence>\", \
-         \"confidence\": <number between 0 and 1>}}\n\n\
-         PREMISE:\n{premise}\n\nHYPOTHESIS:\n{hypothesis}\n"
-    )
+    PROMPT_TEMPLATE
+        .replace("{premise}", premise)
+        .replace("{hypothesis}", hypothesis)
+}
+
+/// The reply schema. Structured-output schemas do not support numerical
+/// constraints, so `confidence` carries no bounds and is clamped on receipt.
+fn reply_schema() -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "properties": {
+            "holds": { "type": "boolean" },
+            "confidence": { "type": "number" },
+            "rationale": { "type": "string" }
+        },
+        "required": ["holds", "confidence", "rationale"],
+        "additionalProperties": false
+    })
+}
+
+#[derive(Debug, Serialize)]
+struct OutputFormat {
+    #[serde(rename = "type")]
+    format_type: &'static str,
+    schema: serde_json::Value,
+}
+
+#[derive(Debug, Serialize)]
+struct OutputConfig<'a> {
+    effort: &'a str,
+    format: OutputFormat,
 }
 
 #[derive(Debug, Serialize)]
 struct MessagesRequest<'a> {
     model: &'a str,
     max_tokens: u32,
+    output_config: OutputConfig<'a>,
     messages: Vec<MessageParam<'a>>,
+}
+
+fn build_request<'a>(
+    model: &'a str,
+    effort: &'a str,
+    premise: &str,
+    hypothesis: &str,
+) -> MessagesRequest<'a> {
+    MessagesRequest {
+        model,
+        max_tokens: MAX_TOKENS,
+        output_config: OutputConfig {
+            effort,
+            format: OutputFormat {
+                format_type: "json_schema",
+                schema: reply_schema(),
+            },
+        },
+        messages: vec![MessageParam {
+            role: "user",
+            content: build_prompt(premise, hypothesis),
+        }],
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -308,7 +350,18 @@ struct MessageParam<'a> {
 
 #[derive(Debug, Deserialize)]
 struct MessagesResponse {
+    #[serde(default)]
     content: Vec<ResponseBlock>,
+    #[serde(default)]
+    stop_reason: Option<String>,
+    #[serde(default)]
+    stop_details: Option<StopDetails>,
+}
+
+#[derive(Debug, Deserialize)]
+struct StopDetails {
+    #[serde(default)]
+    category: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -319,12 +372,46 @@ struct ResponseBlock {
     text: String,
 }
 
-/// The structured reply we ask the judge to emit (see [`build_prompt`]).
+/// The schema-constrained reply (see [`reply_schema`]).
 #[derive(Debug, Deserialize)]
 struct DirectionalReply {
     holds: bool,
-    rationale: String,
     confidence: f32,
+    rationale: String,
+}
+
+/// Read one directional answer out of a Messages API response.
+///
+/// A `stop_reason` of `refusal` is reported as a refusal carrying its
+/// category, rather than surfacing as a missing text block.
+fn directional_from_response(parsed: MessagesResponse) -> anyhow::Result<Directional> {
+    if parsed.stop_reason.as_deref() == Some("refusal") {
+        let category = parsed
+            .stop_details
+            .and_then(|d| d.category)
+            .unwrap_or_else(|| "unspecified".to_string());
+        bail!("LlmEntailment: the judge returned a refusal (category {category})");
+    }
+
+    let text_block = parsed
+        .content
+        .into_iter()
+        .find(|b| b.block_type == "text")
+        .context("LlmEntailment: response had no text content block")?;
+
+    let reply: DirectionalReply =
+        serde_json::from_str(text_block.text.trim()).with_context(|| {
+            format!(
+                "LlmEntailment: judge reply was not the expected JSON: {}",
+                text_block.text
+            )
+        })?;
+
+    Ok(Directional {
+        holds: reply.holds,
+        confidence: reply.confidence.clamp(0.0, 1.0),
+        rationale: reply.rationale,
+    })
 }
 
 impl Entailment for LlmEntailment {
@@ -369,9 +456,88 @@ mod tests {
             endpoint: DEFAULT_ENDPOINT.to_string(),
             model: DEFAULT_MODEL.to_string(),
             api_key: "unused-in-this-test".to_string(),
-            confidence_floor: 0.5,
+            effort: DEFAULT_EFFORT.to_string(),
+            confidence_floor: DEFAULT_CONFIDENCE_FLOOR,
         };
         let err = backend.ask("premise", "hypothesis").unwrap_err();
         assert!(err.to_string().contains(ENABLE_ENV_VAR));
+    }
+
+    #[test]
+    fn default_model_is_the_current_opus() {
+        assert_eq!(DEFAULT_MODEL, "claude-opus-5");
+    }
+
+    /// On Claude Opus 5 thinking is on by default when the `thinking` field is
+    /// omitted, and `max_tokens` caps thinking plus response text together. A
+    /// 1024-token budget lets a hard discrimination spend the budget on
+    /// thinking and truncate the reply, which then surfaces as a parse error.
+    ///
+    /// `MAX_TOKENS` is a compile-time constant, so this is deliberately an
+    /// assertion on a constant: it is a regression guard against the budget
+    /// being lowered back below the thinking-safe threshold.
+    #[test]
+    #[allow(clippy::assertions_on_constants)]
+    fn token_budget_leaves_room_for_thinking() {
+        assert!(MAX_TOKENS >= 16000);
+    }
+
+    #[test]
+    fn request_constrains_the_reply_with_a_schema() {
+        let body = serde_json::to_value(build_request(
+            "claude-opus-5",
+            "high",
+            "premise text",
+            "hypothesis text",
+        ))
+        .unwrap();
+        assert_eq!(body["output_config"]["format"]["type"], "json_schema");
+        assert_eq!(
+            body["output_config"]["format"]["schema"]["required"],
+            serde_json::json!(["holds", "confidence", "rationale"])
+        );
+        assert_eq!(
+            body["output_config"]["format"]["schema"]["additionalProperties"],
+            serde_json::json!(false)
+        );
+        assert_eq!(body["output_config"]["effort"], "high");
+        assert_eq!(body["max_tokens"], MAX_TOKENS);
+    }
+
+    /// Numerical constraints are not supported in structured-output schemas,
+    /// so the schema carries no bounds on confidence and the client clamps.
+    #[test]
+    fn confidence_schema_carries_no_numeric_bounds() {
+        let body = serde_json::to_value(build_request("m", "high", "p", "h")).unwrap();
+        let confidence = &body["output_config"]["format"]["schema"]["properties"]["confidence"];
+        assert_eq!(confidence["type"], "number");
+        assert!(confidence.get("minimum").is_none());
+        assert!(confidence.get("maximum").is_none());
+    }
+
+    #[test]
+    fn a_refusal_is_reported_as_a_refusal() {
+        let raw = r#"{"content":[],"stop_reason":"refusal","stop_details":{"category":"cyber"}}"#;
+        let parsed: MessagesResponse = serde_json::from_str(raw).unwrap();
+        let err = directional_from_response(parsed).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("refusal"), "{msg}");
+        assert!(msg.contains("cyber"), "{msg}");
+    }
+
+    #[test]
+    fn confidence_is_clamped_into_the_unit_interval() {
+        let raw = r#"{"content":[{"type":"text","text":"{\"holds\":true,\"confidence\":1.4,\"rationale\":\"r\"}"}],"stop_reason":"end_turn"}"#;
+        let parsed: MessagesResponse = serde_json::from_str(raw).unwrap();
+        let d = directional_from_response(parsed).unwrap();
+        assert_eq!(d.confidence, 1.0);
+    }
+
+    #[test]
+    fn prompt_template_hash_is_stable_and_hex() {
+        assert_eq!(PROMPT_TEMPLATE_SHA256.len(), 64);
+        assert!(PROMPT_TEMPLATE_SHA256
+            .chars()
+            .all(|c| c.is_ascii_hexdigit()));
     }
 }
