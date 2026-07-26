@@ -1,0 +1,9 @@
+{
+  "subject_imports": ["Synthetic"],
+  "sources": [
+    { "id": "synthetic", "content_list": "synthetic.content_list.json" }
+  ],
+  "warrants": [
+    { "decl": "Synthetic.decl", "source_id": "synthetic", "locator": "§9.9", "claim": "formalises" }
+  ]
+}

@@ -1,0 +1,1 @@
+{"decl":"Synthetic.declSpecialises","type_pp":"…","type_english":"for all f, if f is continuously differentiable on the closed interval [a,b], then f is bounded on [a,b]","axioms":["propext"],"sorry_free":true}

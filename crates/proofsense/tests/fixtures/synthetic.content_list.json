@@ -1,0 +1,8 @@
+[
+  { "type": "text", "text": "1.1 Boundedness of continuous functions", "text_level": 1 },
+  { "type": "text", "text": "THEOREM A. Let f be continuous on the closed interval [a,b]. Then f is bounded on [a,b]." },
+  { "type": "text", "text": "2.1 Uniform continuity", "text_level": 1 },
+  { "type": "text", "text": "THEOREM B. Let f be continuous on the closed interval [a,b]. Then f is uniformly continuous on [a,b]." },
+  { "type": "text", "text": "3.1 Measurability of monotone functions", "text_level": 1 },
+  { "type": "text", "text": "THEOREM C. Let g be monotone on the closed interval [a,b]. Then g is measurable on [a,b]." }
+]

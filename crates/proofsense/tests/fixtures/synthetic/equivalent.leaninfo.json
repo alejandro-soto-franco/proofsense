@@ -1,0 +1,1 @@
+{"decl":"Synthetic.equivalent","type_pp":"…","type_english":"for all f, if f is continuous on the closed interval [a,b], then f is bounded on [a,b]","axioms":["propext"],"sorry_free":true}
