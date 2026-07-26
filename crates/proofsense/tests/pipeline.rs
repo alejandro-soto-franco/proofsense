@@ -23,10 +23,7 @@ fn resolve_section_locator() {
 fn parse_lean_decl_info() {
     let s = std::fs::read_to_string("tests/fixtures/interior_h2.leaninfo.json").unwrap();
     let info = proofsense::lean::parse_decl_info(s.trim()).unwrap();
-    assert_eq!(
-        info.decl,
-        "EllipticPdes.Regularity.interior_H2_estimate"
-    );
+    assert_eq!(info.decl, "EllipticPdes.Regularity.interior_H2_estimate");
     assert!(info.sorry_free);
     assert!(!info.type_english.is_empty());
 }
@@ -56,10 +53,7 @@ fn end_to_end_stub_produces_entailed_verdict() {
         out[0].trust_rung,
         proofsense::verdict::TrustRung::Entailed | proofsense::verdict::TrustRung::Targeted
     ));
-    assert_eq!(
-        out[0].decl,
-        "EllipticPdes.Regularity.interior_H2_estimate"
-    );
+    assert_eq!(out[0].decl, "EllipticPdes.Regularity.interior_H2_estimate");
 }
 
 /// A `Prop` hypothesis the statement actually uses must be *bound* in the
