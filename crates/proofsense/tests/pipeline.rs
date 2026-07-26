@@ -29,19 +29,57 @@ fn parse_lean_decl_info() {
 }
 
 #[test]
-fn stub_entailment_yields_entailed_verdict() {
+fn stub_answers_both_directions_identically() {
     use proofsense::entail::{Entailment, StubEntailment};
-    let (j, _r, _c) = StubEntailment::default()
+    let check = StubEntailment::default()
         .check(
             "the second weak derivatives exist in L^2 with the bound",
             "for every compact set the second weak derivative exists in L^2 ...",
         )
         .unwrap();
-    assert!(matches!(j, proofsense::verdict::Judgement::Entailed));
+    assert!(check.source_entails_decl.holds);
+    assert_eq!(
+        check.source_entails_decl.holds,
+        check.decl_entails_source.holds
+    );
+    assert!(check.source_entails_decl.rationale.starts_with("stub:"));
+}
+
+/// The stub computes symmetric lexical overlap, so it cannot see a one-sided
+/// relation. Its floor is zero because its confidence is an overlap ratio
+/// rather than a calibrated probability.
+#[test]
+fn stub_can_only_produce_equivalent_or_divergent() {
+    use proofsense::entail::{Entailment, StubEntailment};
+    use proofsense::verdict::Relation;
+
+    let stub = StubEntailment::default();
+    assert_eq!(stub.confidence_floor(), 0.0);
+
+    for (passage, english) in [
+        (
+            "the second weak derivatives exist in L^2 with the bound",
+            "for every compact set the second weak derivative exists in L^2 ...",
+        ),
+        ("completely unrelated text about cats", "elliptic operators"),
+    ] {
+        let check = stub.check(passage, english).unwrap();
+        let relation = Relation::derive(
+            &check.source_entails_decl,
+            &check.decl_entails_source,
+            stub.confidence_floor(),
+        );
+        assert!(
+            matches!(relation, Relation::Equivalent | Relation::Divergent),
+            "stub produced {relation}"
+        );
+    }
 }
 
 #[test]
-fn end_to_end_stub_produces_entailed_verdict() {
+fn end_to_end_stub_produces_a_symmetric_relation() {
+    use proofsense::verdict::Relation;
+
     let out = proofsense::run_check_for_test(
         std::path::Path::new("tests/fixtures/manifest.json"),
         std::path::Path::new("tests/fixtures/interior_h2.leaninfo.json"),
@@ -49,11 +87,12 @@ fn end_to_end_stub_produces_entailed_verdict() {
     )
     .unwrap();
     assert_eq!(out.len(), 1);
-    assert!(matches!(
-        out[0].trust_rung,
-        proofsense::verdict::TrustRung::Entailed | proofsense::verdict::TrustRung::Targeted
-    ));
     assert_eq!(out[0].decl, "EllipticPdes.Regularity.interior_H2_estimate");
+    assert!(
+        matches!(out[0].relation, Relation::Equivalent | Relation::Divergent),
+        "the stub cannot see a one-sided relation, got {}",
+        out[0].relation
+    );
 }
 
 /// A `Prop` hypothesis the statement actually uses must be *bound* in the

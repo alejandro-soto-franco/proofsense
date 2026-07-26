@@ -15,7 +15,7 @@ use anyhow::Context;
 use entail::{Entailment, LlmEntailment, StubEntailment};
 use manifest::Manifest;
 use std::path::Path;
-use verdict::{Judgement, TrustRung, Verdict};
+use verdict::{classify, Defect, Relation, TrustRung, Verdict};
 
 /// Run the full pipeline (ingest -> resolve -> Lean bridge -> entailment ->
 /// verdict) for every warrant in `manifest_path`, returning one [`Verdict`]
@@ -32,10 +32,10 @@ use verdict::{Judgement, TrustRung, Verdict};
 ///   `PROOFSENSE_ENABLE_LLM` so it never fires unless explicitly enabled).
 ///
 /// Trust rung per warrant: a locator that fails to resolve to any passage
-/// yields [`TrustRung::Bare`] (a citation only, see the labelling
-/// rule in `verdict.rs`); a resolved passage with an [`Judgement::Entailed`]
-/// verdict yields [`TrustRung::Entailed`]; a resolved passage with any other
-/// judgement yields [`TrustRung::Targeted`] (a concrete target, unconfirmed).
+/// yields [`TrustRung::Bare`] (a citation only, see the labelling rule in
+/// `verdict.rs`); otherwise the two directional entailment answers are
+/// combined into a [`Relation`], and the rung comes from
+/// [`classify`]`(warrant.claim, relation)`.
 pub fn run_check(
     manifest_path: &Path,
     lean_info_override: Option<&Path>,
@@ -90,38 +90,49 @@ pub fn run_check(
             None => lean::extract_decl(lean_dir, &warrant.decl, &manifest.subject_imports)?,
         };
 
-        let (judgement, rationale, confidence, target_passage) = match resolved {
-            Some(passage) => {
-                let (j, r, c) = entailment.check(&passage.text, &lean_info.type_english)?;
-                (j, r, c, passage.text.clone())
-            }
-            None => (
-                Judgement::Uncertain,
-                format!(
-                    "locator {:?} did not resolve to any passage in source {:?}",
-                    warrant.locator, warrant.source_id
-                ),
-                0.0,
-                String::new(),
-            ),
-        };
+        let (relation, source_entails_decl, decl_entails_source, target_passage, passage_sha256) =
+            match resolved {
+                Some(passage) => {
+                    let check = entailment.check(&passage.text, &lean_info.type_english)?;
+                    let relation = Relation::derive(
+                        &check.source_entails_decl,
+                        &check.decl_entails_source,
+                        entailment.confidence_floor(),
+                    );
+                    (
+                        relation,
+                        Some(check.source_entails_decl),
+                        Some(check.decl_entails_source),
+                        passage.text.clone(),
+                        Some(hash::sha256_hex(passage.text.as_bytes())),
+                    )
+                }
+                // No passage resolved, so there is nothing to derive a
+                // relation from and the warrant stays a bare citation.
+                None => (Relation::Undetermined, None, None, String::new(), None),
+            };
 
-        let trust_rung = match (resolved.is_some(), judgement) {
-            (true, Judgement::Entailed) => TrustRung::Entailed,
-            (true, _) => TrustRung::Targeted,
-            (false, _) => TrustRung::Bare,
+        let (trust_rung, defect): (TrustRung, Option<Defect>) = if source_entails_decl.is_some() {
+            classify(warrant.claim, relation)
+        } else {
+            (TrustRung::Bare, None)
         };
 
         verdicts.push(Verdict {
             decl: warrant.decl.clone(),
             source_id: warrant.source_id.clone(),
             locator: warrant.locator.clone(),
-            target_passage,
-            machine_english: lean_info.type_english,
-            judgement,
+            claim: warrant.claim,
+            relation,
             trust_rung,
-            rationale,
-            confidence,
+            defect,
+            source_entails_decl,
+            decl_entails_source,
+            decl_axioms: lean_info.axioms.clone(),
+            sorry_free: lean_info.sorry_free,
+            passage_sha256,
+            machine_english: lean_info.type_english,
+            target_passage,
         });
     }
     Ok(verdicts)
@@ -130,7 +141,7 @@ pub fn run_check(
 /// Test-mode entry point: always bypasses the Lean-exe spawn by parsing
 /// `lean_info_override` (a captured [`lean::LeanDeclInfo`] JSON fixture),
 /// so it never spawns `lake` or touches the network regardless of `stub`.
-/// This is what `end_to_end_stub_produces_entailed_verdict` calls.
+/// This is what `end_to_end_stub_produces_a_symmetric_relation` calls.
 pub fn run_check_for_test(
     manifest: &Path,
     lean_info_override: &Path,

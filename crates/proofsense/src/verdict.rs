@@ -1,5 +1,6 @@
-//! Verdict types: the trust-rung lattice, the entailment judgement, the
-//! per-warrant [`Verdict`] record, and human-readable report rendering.
+//! Verdict types: the trust-rung lattice, the directional entailment
+//! answers, the relation derived from them, the per-warrant [`Verdict`]
+//! record, and human-readable report rendering.
 //!
 //! See the SPEC's "Trust model: the obligation lattice" (§4): every warrant
 //! is labelled with exactly how strong its check is. `TrustRung::Entailed`
@@ -58,39 +59,6 @@ impl fmt::Display for TrustRung {
 /// Serialises as the exact SPEC §4 lattice string (e.g. `"warrant:entailed"`),
 /// matching [`fmt::Display`] rather than the Rust variant name.
 impl Serialize for TrustRung {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_str(&self.to_string())
-    }
-}
-
-/// The outcome of an entailment check: does the target passage support the
-/// machine-English claim.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Judgement {
-    /// The passage entails the claim.
-    Entailed,
-    /// The passage contradicts, or does not support, the claim.
-    NotEntailed,
-    /// The check could not confidently decide either way (e.g. the stub's
-    /// lexical-overlap heuristic fell below threshold, or the judge itself
-    /// reported low confidence).
-    Uncertain,
-}
-
-impl fmt::Display for Judgement {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let s = match self {
-            Judgement::Entailed => "entailed",
-            Judgement::NotEntailed => "not_entailed",
-            Judgement::Uncertain => "uncertain",
-        };
-        f.write_str(s)
-    }
-}
-
-/// Serialises as the exact data-contract string (e.g. `"not_entailed"`),
-/// matching [`fmt::Display`] rather than the Rust variant name.
-impl Serialize for Judgement {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         serializer.serialize_str(&self.to_string())
     }
@@ -221,10 +189,7 @@ pub fn classify(claim: Claim, relation: Relation) -> (TrustRung, Option<Defect>)
     }
 }
 
-/// A reviewable diagnostic for one warrant: the resolved target passage,
-/// the machine-English rendering of the checked declaration, the
-/// entailment judgement obtained between them, the resulting trust rung,
-/// and a rationale a human reviewer can audit.
+/// A reviewable diagnostic for one warrant.
 #[derive(Debug, Clone, Serialize)]
 pub struct Verdict {
     /// Fully-qualified Lean declaration name.
@@ -233,31 +198,58 @@ pub struct Verdict {
     pub source_id: String,
     /// The citation locator as given in the manifest (e.g. `"§6.3.1"`).
     pub locator: String,
-    /// The resolved passage text the claim was checked against.
-    pub target_passage: String,
-    /// The deterministic, faithful-by-construction English rendering of
-    /// the Lean declaration's type (from `LeanDeclInfo::type_english`).
-    pub machine_english: String,
-    /// Whether the passage was found to entail the machine English.
-    pub judgement: Judgement,
+    /// What the warrant claims about the correspondence.
+    pub claim: Claim,
+    /// How the declaration stands to the cited passage.
+    pub relation: Relation,
     /// This warrant's rung in the obligation lattice.
     pub trust_rung: TrustRung,
-    /// A one-line-or-so human-readable explanation of the judgement.
-    /// For [`crate::entail::StubEntailment`] this always says "stub",
-    /// since it is a test double, never a real check.
-    pub rationale: String,
-    /// The entailment judge's confidence in `[0.0, 1.0]`.
-    pub confidence: f32,
+    /// A positive finding, when there is one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub defect: Option<Defect>,
+    /// Does the passage entail the machine English? Absent when the locator
+    /// did not resolve.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_entails_decl: Option<Directional>,
+    /// Does the machine English entail the passage? Absent when the locator
+    /// did not resolve.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub decl_entails_source: Option<Directional>,
+    /// Axioms the checked declaration depends on.
+    pub decl_axioms: Vec<String>,
+    /// Whether the declaration's proof is free of `sorry`.
+    pub sorry_free: bool,
+    /// SHA-256 of the resolved passage text. Absent when nothing resolved.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub passage_sha256: Option<String>,
+    /// The deterministic, faithful-by-construction English rendering of the
+    /// Lean declaration's type.
+    pub machine_english: String,
+    /// The resolved passage text the claim was checked against.
+    pub target_passage: String,
 }
 
 /// Render a [`Verdict`] as human-readable CLI text.
 pub fn render_report(v: &Verdict) -> String {
+    let defect = match v.defect {
+        Some(d) => format!("\ndefect: {d}"),
+        None => String::new(),
+    };
+    let directions = match (&v.source_entails_decl, &v.decl_entails_source) {
+        (Some(s), Some(d)) => format!(
+            "\nsource entails decl: {} (confidence {:.2}) {}\
+             \ndecl entails source: {} (confidence {:.2}) {}",
+            s.holds, s.confidence, s.rationale, d.holds, d.confidence, d.rationale
+        ),
+        _ => String::new(),
+    };
+
     format!(
         "warrant: {decl}\n\
          source: {source_id} ({locator})\n\
-         trust rung: {trust_rung}\n\
-         judgement: {judgement} (confidence {confidence:.2})\n\
-         rationale: {rationale}\n\
+         claim: {claim}\n\
+         relation: {relation}\n\
+         trust rung: {trust_rung}{defect}{directions}\n\
          \n\
          machine english:\n  {machine_english}\n\
          \n\
@@ -265,10 +257,11 @@ pub fn render_report(v: &Verdict) -> String {
         decl = v.decl,
         source_id = v.source_id,
         locator = v.locator,
+        claim = v.claim,
+        relation = v.relation,
         trust_rung = v.trust_rung,
-        judgement = v.judgement,
-        confidence = v.confidence,
-        rationale = v.rationale,
+        defect = defect,
+        directions = directions,
         machine_english = v.machine_english,
         target_passage = v.target_passage,
     )
@@ -290,33 +283,64 @@ mod tests {
         assert_eq!(TrustRung::Discharged.to_string(), "discharged");
     }
 
-    #[test]
-    fn judgement_display_matches_spec_data_contract() {
-        assert_eq!(Judgement::Entailed.to_string(), "entailed");
-        assert_eq!(Judgement::NotEntailed.to_string(), "not_entailed");
-        assert_eq!(Judgement::Uncertain.to_string(), "uncertain");
-    }
-
-    #[test]
-    fn render_report_includes_key_fields() {
-        let v = Verdict {
+    fn sample_verdict() -> Verdict {
+        Verdict {
             decl: "Foo.bar".to_string(),
             source_id: "evans-2010".to_string(),
             locator: "§6.3.1".to_string(),
-            target_passage: "the passage text".to_string(),
+            claim: Claim::Formalises,
+            relation: Relation::DeclSpecialises,
+            trust_rung: TrustRung::Targeted,
+            defect: Some(Defect::Understated),
+            source_entails_decl: Some(dir(true, 0.94)),
+            decl_entails_source: Some(dir(false, 0.88)),
+            decl_axioms: vec!["propext".to_string()],
+            sorry_free: true,
+            passage_sha256: Some("a1c9".to_string()),
             machine_english: "the machine english".to_string(),
-            judgement: Judgement::Entailed,
-            trust_rung: TrustRung::Entailed,
-            rationale: "stub: matched".to_string(),
-            confidence: 0.75,
-        };
-        let report = render_report(&v);
+            target_passage: "the passage text".to_string(),
+        }
+    }
+
+    #[test]
+    fn render_report_shows_the_relation_and_the_defect() {
+        let report = render_report(&sample_verdict());
         assert!(report.contains("Foo.bar"));
-        assert!(report.contains("evans-2010"));
-        assert!(report.contains("warrant:entailed"));
-        assert!(report.contains("entailed"));
+        assert!(report.contains("warrant:targeted"));
+        assert!(report.contains("decl_specialises"));
+        assert!(report.contains("understated"));
+        assert!(report.contains("formalises"));
         assert!(report.contains("the passage text"));
         assert!(report.contains("the machine english"));
+    }
+
+    #[test]
+    fn a_verdict_serialises_with_the_data_contract_strings() {
+        let json = serde_json::to_value(sample_verdict()).unwrap();
+        assert_eq!(json["claim"], "formalises");
+        assert_eq!(json["relation"], "decl_specialises");
+        assert_eq!(json["trust_rung"], "warrant:targeted");
+        assert_eq!(json["defect"], "understated");
+        assert_eq!(json["source_entails_decl"]["holds"], true);
+        assert_eq!(json["decl_entails_source"]["holds"], false);
+    }
+
+    /// An unresolved locator has no passage, so there is nothing to hash and
+    /// no direction to answer. Those fields are absent rather than empty.
+    #[test]
+    fn an_unresolved_warrant_omits_the_passage_fields() {
+        let mut v = sample_verdict();
+        v.trust_rung = TrustRung::Bare;
+        v.relation = Relation::Undetermined;
+        v.defect = None;
+        v.source_entails_decl = None;
+        v.decl_entails_source = None;
+        v.passage_sha256 = None;
+        let json = serde_json::to_value(&v).unwrap();
+        assert!(json.get("source_entails_decl").is_none());
+        assert!(json.get("decl_entails_source").is_none());
+        assert!(json.get("passage_sha256").is_none());
+        assert!(json.get("defect").is_none());
     }
 
     fn dir(holds: bool, confidence: f32) -> Directional {

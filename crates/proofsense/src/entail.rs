@@ -10,21 +10,33 @@
 //!   compiles, but gated behind an env var so it is never invoked by
 //!   `cargo test`; tests must run fully offline.
 
-use crate::verdict::Judgement;
+use crate::verdict::Directional;
 use anyhow::{bail, Context};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::env;
 
-/// Pluggable entailment check: does `passage` (the premise) entail
-/// `machine_english` (the hypothesis)? Returns the judgement, a short
-/// human-readable rationale, and a confidence in `[0.0, 1.0]`.
+/// One directional entailment answer per direction: does `passage` entail
+/// `machine_english`, and does `machine_english` entail `passage`. Both
+/// answers come from the same backend, and the relation between them is
+/// derived by [`crate::verdict::Relation::derive`].
+pub struct RelationCheck {
+    /// Does the source passage entail the machine English?
+    pub source_entails_decl: Directional,
+    /// Does the machine English entail the source passage?
+    pub decl_entails_source: Directional,
+}
+
+/// Pluggable entailment check. Implementors answer both directions and
+/// declare the confidence below which their own answers mean nothing.
 pub trait Entailment {
-    fn check(
-        &self,
-        passage: &str,
-        machine_english: &str,
-    ) -> anyhow::Result<(Judgement, String, f32)>;
+    /// Answer both directions between `passage` and `machine_english`.
+    fn check(&self, passage: &str, machine_english: &str) -> anyhow::Result<RelationCheck>;
+
+    /// The confidence below which this backend's answers are treated as
+    /// undecided. A backend whose confidence is not a calibrated probability
+    /// returns `0.0`.
+    fn confidence_floor(&self) -> f32;
 }
 
 /// A small, fixed set of English function words excluded from the salient
@@ -62,21 +74,20 @@ fn salient_tokens(s: &str) -> HashSet<String> {
 /// Both `passage` and `machine_english` are tokenized into their
 /// [`salient_tokens`] sets (see that function's doc for the exact
 /// normalisation). If the two sets share at least
-/// `min_shared_salient_tokens` tokens, the result is
-/// [`Judgement::Entailed`]; otherwise it is [`Judgement::Uncertain`] (the
-/// stub has no way to detect contradiction, so it never returns
-/// [`Judgement::NotEntailed`]; weak or absent lexical overlap is treated
-/// as "can't tell", not "false"). Confidence is the fraction of the
+/// `min_shared_salient_tokens` tokens, `holds` is `true` for that direction;
+/// otherwise it is `false` (the stub has no way to detect contradiction
+/// separately from absent overlap, so a weak or absent match reads as `false`,
+/// not as a distinct "uncertain" state). Confidence is the fraction of the
 /// hypothesis's salient tokens found in the passage, clamped to `1.0`.
 ///
 /// The rationale always begins with `"stub:"`, since this is a test double, not
 /// a real entailment check, and must never claim otherwise.
 #[derive(Debug, Clone)]
 pub struct StubEntailment {
-    /// Minimum number of shared salient tokens for a verdict of
-    /// [`Judgement::Entailed`]. Default (`3`) is chosen so that a genuinely
-    /// related passage/claim pair, sharing a handful of technical terms,
-    /// clears the bar, while two unrelated sentences do not.
+    /// Minimum number of shared salient tokens for `holds` to be `true`.
+    /// Default (`3`) is chosen so that a genuinely related passage/claim
+    /// pair, sharing a handful of technical terms, clears the bar, while two
+    /// unrelated sentences do not.
     pub min_shared_salient_tokens: usize,
 }
 
@@ -89,39 +100,41 @@ impl Default for StubEntailment {
 }
 
 impl Entailment for StubEntailment {
-    fn check(
-        &self,
-        passage: &str,
-        machine_english: &str,
-    ) -> anyhow::Result<(Judgement, String, f32)> {
+    fn check(&self, passage: &str, machine_english: &str) -> anyhow::Result<RelationCheck> {
         let passage_tokens = salient_tokens(passage);
         let hypothesis_tokens = salient_tokens(machine_english);
 
-        let shared: Vec<&String> = hypothesis_tokens.intersection(&passage_tokens).collect();
-        let shared_count = shared.len();
-
+        let shared_count = hypothesis_tokens.intersection(&passage_tokens).count();
         let hypothesis_len = hypothesis_tokens.len().max(1);
         let confidence = (shared_count as f32 / hypothesis_len as f32).min(1.0);
+        let holds = shared_count >= self.min_shared_salient_tokens;
 
-        if shared_count >= self.min_shared_salient_tokens {
-            Ok((
-                Judgement::Entailed,
-                format!(
-                    "stub: {shared_count} shared salient token(s) meets threshold {} (deterministic lexical-overlap test double, not a real check)",
-                    self.min_shared_salient_tokens
-                ),
+        let rationale = format!(
+            "stub: {shared_count} shared salient token(s) against threshold {} \
+             (deterministic lexical-overlap test double, not a real check)",
+            self.min_shared_salient_tokens
+        );
+
+        // Lexical overlap is symmetric, so the stub answers both directions
+        // the same way and can never report a one-sided relation.
+        Ok(RelationCheck {
+            source_entails_decl: Directional {
+                holds,
                 confidence,
-            ))
-        } else {
-            Ok((
-                Judgement::Uncertain,
-                format!(
-                    "stub: only {shared_count} shared salient token(s), below threshold {} (deterministic lexical-overlap test double, not a real check)",
-                    self.min_shared_salient_tokens
-                ),
+                rationale: rationale.clone(),
+            },
+            decl_entails_source: Directional {
+                holds,
                 confidence,
-            ))
-        }
+                rationale,
+            },
+        })
+    }
+
+    /// Zero: the stub's confidence is an overlap ratio, not a probability, so
+    /// a shared floor would silently make every stub verdict undecided.
+    fn confidence_floor(&self) -> f32 {
+        0.0
     }
 }
 
@@ -152,7 +165,7 @@ const ANTHROPIC_VERSION: &str = "2023-06-01";
 ///
 /// Rust has no official Anthropic SDK, so this speaks the Messages API
 /// directly over HTTP (`reqwest`, blocking). The call only happens when
-/// [`ENABLE_ENV_VAR`] is set; otherwise [`LlmEntailment::check`] returns
+/// [`ENABLE_ENV_VAR`] is set; otherwise each direction's request returns
 /// an error without making a request. This is what keeps `cargo test`
 /// fully offline: no test in this crate sets that env var, so this path
 /// is wired and compiled but never exercised.
@@ -164,6 +177,9 @@ pub struct LlmEntailment {
     pub model: String,
     /// API key, sent as the `x-api-key` header.
     pub api_key: String,
+    /// The confidence below which this backend's answers are treated as
+    /// undecided.
+    pub confidence_floor: f32,
 }
 
 impl LlmEntailment {
@@ -181,78 +197,13 @@ impl LlmEntailment {
             endpoint,
             model,
             api_key,
+            confidence_floor: 0.5,
         })
     }
-}
 
-/// Strict NLI prompt: instructs the judge to decide entailment between a
-/// literature passage (premise) and a machine-English statement rendering
-/// (hypothesis), and to reply with exactly one line of JSON so the
-/// response is mechanically parseable.
-fn build_prompt(passage: &str, machine_english: &str) -> String {
-    format!(
-        "You are a strict natural-language-inference judge for a proof-linting \
-         tool. You are given a PREMISE (a transcribed passage from a literature \
-         source) and a HYPOTHESIS (a machine-generated English rendering of a \
-         formally verified mathematical statement). Decide whether the PREMISE \
-         entails the HYPOTHESIS: does the passage support every claim the \
-         hypothesis makes, with no unsupported strengthening.\n\n\
-         Respond with EXACTLY one line of JSON and nothing else, matching this \
-         shape: {{\"judgement\": \"entailed\" | \"not_entailed\" | \"uncertain\", \
-         \"rationale\": \"<one sentence>\", \"confidence\": <number between 0 and 1>}}\n\n\
-         PREMISE:\n{passage}\n\nHYPOTHESIS:\n{machine_english}\n"
-    )
-}
-
-#[derive(Debug, Serialize)]
-struct MessagesRequest<'a> {
-    model: &'a str,
-    max_tokens: u32,
-    messages: Vec<MessageParam<'a>>,
-}
-
-#[derive(Debug, Serialize)]
-struct MessageParam<'a> {
-    role: &'a str,
-    content: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct MessagesResponse {
-    content: Vec<ResponseBlock>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ResponseBlock {
-    #[serde(rename = "type")]
-    block_type: String,
-    #[serde(default)]
-    text: String,
-}
-
-/// The structured reply we ask the judge to emit (see [`build_prompt`]).
-#[derive(Debug, Deserialize)]
-struct NliReply {
-    judgement: String,
-    rationale: String,
-    confidence: f32,
-}
-
-fn parse_judgement(s: &str) -> anyhow::Result<Judgement> {
-    match s {
-        "entailed" => Ok(Judgement::Entailed),
-        "not_entailed" => Ok(Judgement::NotEntailed),
-        "uncertain" => Ok(Judgement::Uncertain),
-        other => bail!("LlmEntailment: judge returned unrecognised judgement {other:?}"),
-    }
-}
-
-impl Entailment for LlmEntailment {
-    fn check(
-        &self,
-        passage: &str,
-        machine_english: &str,
-    ) -> anyhow::Result<(Judgement, String, f32)> {
+    /// Ask the judge whether `premise` entails `hypothesis`, one direction at
+    /// a time.
+    pub fn ask(&self, premise: &str, hypothesis: &str) -> anyhow::Result<Directional> {
         // Gate: never perform a network call unless explicitly enabled.
         // This is the whole reason `cargo test` stays offline with this
         // backend wired in, and no test sets this env var.
@@ -266,7 +217,7 @@ impl Entailment for LlmEntailment {
             );
         }
 
-        let prompt = build_prompt(passage, machine_english);
+        let prompt = build_prompt(premise, hypothesis);
         let request = MessagesRequest {
             model: &self.model,
             max_tokens: 1024,
@@ -302,15 +253,88 @@ impl Entailment for LlmEntailment {
             .find(|b| b.block_type == "text")
             .context("LlmEntailment: response had no text content block")?;
 
-        let reply: NliReply = serde_json::from_str(text_block.text.trim()).with_context(|| {
-            format!(
-                "LlmEntailment: judge reply was not the expected JSON: {}",
-                text_block.text
-            )
-        })?;
+        let reply: DirectionalReply =
+            serde_json::from_str(text_block.text.trim()).with_context(|| {
+                format!(
+                    "LlmEntailment: judge reply was not the expected JSON: {}",
+                    text_block.text
+                )
+            })?;
 
-        let judgement = parse_judgement(&reply.judgement)?;
-        Ok((judgement, reply.rationale, reply.confidence))
+        Ok(Directional {
+            holds: reply.holds,
+            confidence: reply.confidence.clamp(0.0, 1.0),
+            rationale: reply.rationale,
+        })
+    }
+}
+
+/// Strict NLI prompt: instructs the judge to decide entailment between a
+/// literature passage (premise) and a machine-English statement rendering
+/// (hypothesis), and to reply with exactly one line of JSON so the
+/// response is mechanically parseable. Asks about a single direction only;
+/// the caller swaps the operands to ask about the other.
+fn build_prompt(premise: &str, hypothesis: &str) -> String {
+    format!(
+        "You are a strict natural-language-inference judge for a proof-linting \
+         tool. You are given a PREMISE (a transcribed passage from a literature \
+         source, or a machine-generated English rendering of a formally verified \
+         mathematical statement) and a HYPOTHESIS (the other of the two). Decide \
+         whether the PREMISE entails the HYPOTHESIS: does the PREMISE support \
+         every claim the HYPOTHESIS makes, with no unsupported strengthening. You \
+         are being asked about this one direction only; the reverse direction, if \
+         wanted, is asked separately with the operands swapped.\n\n\
+         Respond with EXACTLY one line of JSON and nothing else, matching this \
+         shape: {{\"holds\": true | false, \"rationale\": \"<one sentence>\", \
+         \"confidence\": <number between 0 and 1>}}\n\n\
+         PREMISE:\n{premise}\n\nHYPOTHESIS:\n{hypothesis}\n"
+    )
+}
+
+#[derive(Debug, Serialize)]
+struct MessagesRequest<'a> {
+    model: &'a str,
+    max_tokens: u32,
+    messages: Vec<MessageParam<'a>>,
+}
+
+#[derive(Debug, Serialize)]
+struct MessageParam<'a> {
+    role: &'a str,
+    content: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct MessagesResponse {
+    content: Vec<ResponseBlock>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ResponseBlock {
+    #[serde(rename = "type")]
+    block_type: String,
+    #[serde(default)]
+    text: String,
+}
+
+/// The structured reply we ask the judge to emit (see [`build_prompt`]).
+#[derive(Debug, Deserialize)]
+struct DirectionalReply {
+    holds: bool,
+    rationale: String,
+    confidence: f32,
+}
+
+impl Entailment for LlmEntailment {
+    fn check(&self, passage: &str, machine_english: &str) -> anyhow::Result<RelationCheck> {
+        Ok(RelationCheck {
+            source_entails_decl: self.ask(passage, machine_english)?,
+            decl_entails_source: self.ask(machine_english, passage)?,
+        })
+    }
+
+    fn confidence_floor(&self) -> f32 {
+        self.confidence_floor
     }
 }
 
@@ -331,26 +355,6 @@ mod tests {
     }
 
     #[test]
-    fn stub_returns_uncertain_below_threshold() {
-        let (j, r, _c) = StubEntailment::default()
-            .check(
-                "completely unrelated text about cats",
-                "a statement about elliptic operators",
-            )
-            .unwrap();
-        assert!(matches!(j, Judgement::Uncertain));
-        assert!(r.starts_with("stub:"));
-    }
-
-    #[test]
-    fn stub_never_calls_network_and_rationale_says_stub() {
-        // Purely a sanity check that the rationale states plainly that it is a
-        // test double, per the "never claim a real check" constraint.
-        let (_, r, _) = StubEntailment::default().check("x", "y").unwrap();
-        assert!(r.contains("stub"));
-    }
-
-    #[test]
     fn llm_entailment_check_is_gated_when_env_var_unset() {
         // Ensure the gate is off in this test process, then confirm the
         // call errors out before any network I/O would occur.
@@ -363,8 +367,9 @@ mod tests {
             endpoint: DEFAULT_ENDPOINT.to_string(),
             model: DEFAULT_MODEL.to_string(),
             api_key: "unused-in-this-test".to_string(),
+            confidence_floor: 0.5,
         };
-        let err = backend.check("premise", "hypothesis").unwrap_err();
+        let err = backend.ask("premise", "hypothesis").unwrap_err();
         assert!(err.to_string().contains(ENABLE_ENV_VAR));
     }
 }
