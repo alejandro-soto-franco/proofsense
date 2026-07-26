@@ -9,17 +9,20 @@ pub mod ingest;
 pub mod lean;
 pub mod locator;
 pub mod manifest;
+pub mod report;
 pub mod verdict;
 
 use anyhow::Context;
 use entail::{Entailment, LlmEntailment, StubEntailment};
 use manifest::Manifest;
+use report::{Report, RunInfo, SourceInfo};
 use std::path::Path;
 use verdict::{classify, Defect, Relation, TrustRung, Verdict};
 
 /// Run the full pipeline (ingest -> resolve -> Lean bridge -> entailment ->
-/// verdict) for every warrant in `manifest_path`, returning one [`Verdict`]
-/// per warrant in manifest order.
+/// verdict) for every warrant in `manifest_path`, returning a [`Report`]
+/// carrying one [`Verdict`] per warrant plus what was read and what judged
+/// it.
 ///
 /// - `lean_info_override`: when `Some(path)`, every warrant's
 ///   [`lean::LeanDeclInfo`] is parsed from that single captured JSON file
@@ -41,7 +44,7 @@ pub fn run_check(
     lean_info_override: Option<&Path>,
     lean_dir: &Path,
     stub: bool,
-) -> anyhow::Result<Vec<Verdict>> {
+) -> anyhow::Result<Report> {
     let entailment: Box<dyn Entailment> = if stub {
         Box::new(StubEntailment::default())
     } else {
@@ -67,11 +70,12 @@ pub fn run_check_with(
     lean_info_override: Option<&Path>,
     lean_dir: &Path,
     entailment: &dyn Entailment,
-) -> anyhow::Result<Vec<Verdict>> {
+) -> anyhow::Result<Report> {
     let raw = std::fs::read_to_string(manifest_path)
         .with_context(|| format!("reading manifest {}", manifest_path.display()))?;
     let manifest: Manifest = serde_json::from_str(&raw)
         .with_context(|| format!("parsing manifest JSON {}", manifest_path.display()))?;
+    let manifest_sha256 = hash::sha256_hex(raw.as_bytes());
 
     // Paths inside the manifest (e.g. each source's `content_list`) are
     // resolved relative to the manifest file's own directory, not the
@@ -80,26 +84,41 @@ pub fn run_check_with(
     // does) or from the workspace root (as `cargo run` does).
     let manifest_dir = manifest_path.parent().unwrap_or_else(|| Path::new("."));
 
-    let mut verdicts = Vec::with_capacity(manifest.warrants.len());
-    for warrant in &manifest.warrants {
-        let source = manifest
-            .sources
-            .iter()
-            .find(|s| s.id == warrant.source_id)
-            .with_context(|| {
-                format!(
-                    "warrant for {:?} cites unknown source_id {:?}",
-                    warrant.decl, warrant.source_id
-                )
-            })?;
+    // The backend describes its own identity: a report can only ever record
+    // the judge that actually ran, never one a caller merely claims.
+    let judge = entailment.describe();
 
+    // Load each source's passages once, keyed by id, rather than per
+    // warrant, and record what was actually read.
+    let mut sources: Vec<SourceInfo> = Vec::new();
+    let mut loaded: std::collections::HashMap<String, Vec<ingest::Passage>> =
+        std::collections::HashMap::new();
+    for source in &manifest.sources {
         let content_list_path = if source.content_list.is_absolute() {
             source.content_list.clone()
         } else {
             manifest_dir.join(&source.content_list)
         };
+        let bytes = std::fs::read(&content_list_path)
+            .with_context(|| format!("reading content_list {}", content_list_path.display()))?;
         let passages = ingest::load_passages(&content_list_path)?;
-        let resolved = locator::resolve(&passages, &warrant.locator);
+        sources.push(SourceInfo {
+            id: source.id.clone(),
+            content_list_sha256: hash::sha256_hex(&bytes),
+            passage_count: passages.len(),
+        });
+        loaded.insert(source.id.clone(), passages);
+    }
+
+    let mut verdicts = Vec::with_capacity(manifest.warrants.len());
+    for warrant in &manifest.warrants {
+        let passages = loaded.get(&warrant.source_id).with_context(|| {
+            format!(
+                "warrant for {:?} cites unknown source_id {:?}",
+                warrant.decl, warrant.source_id
+            )
+        })?;
+        let resolved = locator::resolve(passages, &warrant.locator);
 
         let lean_info = match lean_info_override {
             Some(path) => {
@@ -155,7 +174,23 @@ pub fn run_check_with(
             target_passage,
         });
     }
-    Ok(verdicts)
+
+    let (lean_toolchain, subject, lean_packages) =
+        report::read_lean_provenance(lean_dir, &manifest.subject_imports);
+
+    Ok(Report {
+        schema: report::SCHEMA,
+        proofsense_version: env!("CARGO_PKG_VERSION"),
+        run: RunInfo {
+            manifest_sha256,
+            lean_toolchain,
+            subject,
+            lean_packages,
+        },
+        judge,
+        sources,
+        verdicts,
+    })
 }
 
 /// Test-mode entry point: always bypasses the Lean-exe spawn by parsing
@@ -166,6 +201,6 @@ pub fn run_check_for_test(
     manifest: &Path,
     lean_info_override: &Path,
     stub: bool,
-) -> anyhow::Result<Vec<Verdict>> {
+) -> anyhow::Result<Report> {
     run_check(manifest, Some(lean_info_override), Path::new("lean"), stub)
 }

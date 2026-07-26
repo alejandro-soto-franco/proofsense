@@ -46,11 +46,12 @@ fn main() -> anyhow::Result<()> {
             lean_info,
             lean_dir,
         } => {
-            let verdicts = proofsense::run_check(&manifest, lean_info.as_deref(), &lean_dir, stub)?;
-            for v in &verdicts {
+            let report = proofsense::run_check(&manifest, lean_info.as_deref(), &lean_dir, stub)?;
+            println!("{}", proofsense::report::render_header(&report));
+            for v in &report.verdicts {
                 println!("{}", proofsense::verdict::render_report(v));
-                println!("{}", serde_json::to_string_pretty(v)?);
             }
+            println!("{}", serde_json::to_string_pretty(&report)?);
             Ok(())
         }
     }

@@ -80,19 +80,49 @@ fn stub_can_only_produce_equivalent_or_divergent() {
 
 #[test]
 fn end_to_end_stub_produces_a_symmetric_relation() {
-    let out = proofsense::run_check_for_test(
+    let report = proofsense::run_check_for_test(
         std::path::Path::new("tests/fixtures/manifest.json"),
         std::path::Path::new("tests/fixtures/interior_h2.leaninfo.json"),
         /*stub=*/ true,
     )
     .unwrap();
-    assert_eq!(out.len(), 1);
-    assert_eq!(out[0].decl, "EllipticPdes.Regularity.interior_H2_estimate");
-    assert!(
-        matches!(out[0].relation, Relation::Equivalent | Relation::Divergent),
-        "the stub cannot see a one-sided relation, got {}",
-        out[0].relation
+    assert_eq!(report.verdicts.len(), 1);
+    assert_eq!(
+        report.verdicts[0].decl,
+        "EllipticPdes.Regularity.interior_H2_estimate"
     );
+    assert!(
+        matches!(
+            report.verdicts[0].relation,
+            Relation::Equivalent | Relation::Divergent
+        ),
+        "the stub cannot see a one-sided relation, got {}",
+        report.verdicts[0].relation
+    );
+}
+
+#[test]
+fn the_report_pins_what_was_read_and_what_judged() {
+    let report = proofsense::run_check_for_test(
+        std::path::Path::new("tests/fixtures/manifest.json"),
+        std::path::Path::new("tests/fixtures/interior_h2.leaninfo.json"),
+        /*stub=*/ true,
+    )
+    .unwrap();
+
+    assert_eq!(report.schema, "proofsense.report/1");
+    assert_eq!(report.judge.kind, "stub");
+    assert_eq!(report.run.manifest_sha256.len(), 64);
+    assert_eq!(report.sources.len(), 1);
+    assert_eq!(report.sources[0].id, "evans-2010");
+    assert_eq!(report.sources[0].content_list_sha256.len(), 64);
+    assert!(report.sources[0].passage_count >= 1);
+    assert_eq!(
+        report.verdicts[0].passage_sha256.as_ref().map(|h| h.len()),
+        Some(64)
+    );
+    assert!(!report.verdicts[0].decl_axioms.is_empty());
+    assert!(report.verdicts[0].sorry_free);
 }
 
 fn answer(holds: bool) -> Directional {
@@ -120,6 +150,18 @@ impl Entailment for OneWay {
     fn confidence_floor(&self) -> f32 {
         0.0
     }
+
+    /// A test double, and never allowed to masquerade as an LLM judge in a
+    /// report.
+    fn describe(&self) -> proofsense::report::JudgeInfo {
+        proofsense::report::JudgeInfo {
+            kind: "stub",
+            model: None,
+            effort: None,
+            confidence_floor: 0.0,
+            prompt_sha256: None,
+        }
+    }
 }
 
 fn run_one_way(
@@ -130,7 +172,7 @@ fn run_one_way(
         source_entails_decl,
         decl_entails_source,
     };
-    let mut out = proofsense::run_check_with(
+    let mut report = proofsense::run_check_with(
         std::path::Path::new("tests/fixtures/manifest.json"),
         Some(std::path::Path::new(
             "tests/fixtures/interior_h2.leaninfo.json",
@@ -139,7 +181,7 @@ fn run_one_way(
         &backend,
     )
     .unwrap();
-    out.remove(0)
+    report.verdicts.remove(0)
 }
 
 /// Source entails the declaration but not the reverse: the declaration is a

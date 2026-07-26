@@ -39,6 +39,10 @@ pub trait Entailment {
     /// undecided. A backend whose confidence is not a calibrated probability
     /// returns `0.0`.
     fn confidence_floor(&self) -> f32;
+
+    /// Describe this backend for the run report. The backend reports its own
+    /// identity so a report can never claim a judge that did not run.
+    fn describe(&self) -> crate::report::JudgeInfo;
 }
 
 /// A small, fixed set of English function words excluded from the salient
@@ -137,6 +141,16 @@ impl Entailment for StubEntailment {
     /// a shared floor would silently make every stub verdict undecided.
     fn confidence_floor(&self) -> f32 {
         0.0
+    }
+
+    fn describe(&self) -> crate::report::JudgeInfo {
+        crate::report::JudgeInfo {
+            kind: "stub",
+            model: None,
+            effort: None,
+            confidence_floor: self.confidence_floor(),
+            prompt_sha256: None,
+        }
     }
 }
 
@@ -424,6 +438,16 @@ impl Entailment for LlmEntailment {
 
     fn confidence_floor(&self) -> f32 {
         self.confidence_floor
+    }
+
+    fn describe(&self) -> crate::report::JudgeInfo {
+        crate::report::JudgeInfo {
+            kind: "llm",
+            model: Some(self.model.clone()),
+            effort: Some(self.effort.clone()),
+            confidence_floor: self.confidence_floor,
+            prompt_sha256: Some(PROMPT_TEMPLATE_SHA256.clone()),
+        }
     }
 }
 
