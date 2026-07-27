@@ -245,3 +245,35 @@ fn dependent_prop_hypotheses_are_bound_not_elided() {
         "found a projection off an unbound hypothesis: {english}"
     );
 }
+
+/// Resolution is checkable on its own, with no Lean toolchain and no judge.
+/// A warrant pointing at the wrong passage yields a verdict about the wrong
+/// theorem, so this is the cheapest gate a manifest can carry.
+#[test]
+fn resolve_manifest_reports_what_each_warrant_hit() {
+    let resolutions =
+        proofsense::resolve_manifest(std::path::Path::new("tests/fixtures/manifest.json")).unwrap();
+
+    assert_eq!(resolutions.len(), 1);
+    let r = &resolutions[0];
+    assert_eq!(r.decl, "EllipticPdes.Regularity.interior_H2_estimate");
+    assert_eq!(r.resolved.as_deref(), Some("6.3.1"));
+    assert!(r.chars > 0);
+    assert!(!r.head.is_empty());
+}
+
+#[test]
+fn resolve_manifest_reports_a_miss_rather_than_failing() {
+    let resolutions = proofsense::resolve_manifest(std::path::Path::new(
+        "tests/fixtures/synthetic-manifest-unresolved.json",
+    ))
+    .unwrap();
+
+    assert!(resolutions.iter().any(|r| r.resolved.is_none()));
+    // A miss carries no operand, so nothing downstream can mistake it for a
+    // resolved passage.
+    for r in resolutions.iter().filter(|r| r.resolved.is_none()) {
+        assert_eq!(r.chars, 0);
+        assert!(r.head.is_empty());
+    }
+}

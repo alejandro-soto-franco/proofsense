@@ -35,6 +35,15 @@ enum Cmd {
         #[arg(long, default_value = "lean")]
         lean_dir: PathBuf,
     },
+
+    /// Resolve every warrant's locator and report what it hit, without
+    /// spawning Lean or calling a judge. A warrant pointing at the wrong
+    /// passage yields a verdict about the wrong theorem, so this gates a
+    /// manifest before any expensive step runs.
+    Resolve {
+        /// Path to the manifest JSON.
+        manifest: PathBuf,
+    },
 }
 
 fn main() -> anyhow::Result<()> {
@@ -52,6 +61,39 @@ fn main() -> anyhow::Result<()> {
                 println!("{}", proofsense::verdict::render_report(v));
             }
             println!("{}", serde_json::to_string_pretty(&report)?);
+            Ok(())
+        }
+        Cmd::Resolve { manifest } => {
+            let resolutions = proofsense::resolve_manifest(&manifest)?;
+            let unresolved = resolutions.iter().filter(|r| r.resolved.is_none()).count();
+
+            for r in &resolutions {
+                match &r.resolved {
+                    Some(hit) => println!(
+                        "  ok    {decl}\n        {locator} -> {hit}  ({chars} chars)\n        {head}",
+                        decl = r.decl,
+                        locator = r.locator,
+                        chars = r.chars,
+                        head = r.head.chars().take(96).collect::<String>(),
+                    ),
+                    None => println!(
+                        "  MISS  {decl}\n        {locator} matched no passage in {source}",
+                        decl = r.decl,
+                        locator = r.locator,
+                        source = r.source_id,
+                    ),
+                }
+            }
+
+            println!(
+                "\n{} warrants, {} resolved, {} unresolved",
+                resolutions.len(),
+                resolutions.len() - unresolved,
+                unresolved,
+            );
+            if unresolved > 0 {
+                anyhow::bail!("{unresolved} warrant(s) resolved to no passage");
+            }
             Ok(())
         }
     }

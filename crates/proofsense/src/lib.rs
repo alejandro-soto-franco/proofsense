@@ -19,6 +19,73 @@ use report::{Report, RunInfo, SourceInfo};
 use std::path::Path;
 use verdict::{classify, Defect, Relation, TrustRung, Verdict};
 
+/// What a warrant's locator resolved to, with no Lean and no judge involved.
+#[derive(Debug, Clone)]
+pub struct Resolution {
+    pub decl: String,
+    pub source_id: String,
+    pub locator: String,
+    /// The resolved passage's own locator, absent when nothing matched.
+    pub resolved: Option<String>,
+    /// Size of the resolved passage in characters, which is the operand the
+    /// judge would be handed.
+    pub chars: usize,
+    /// First line of the resolved passage, for eyeballing that a locator
+    /// points where its author meant.
+    pub head: String,
+}
+
+/// Resolve every warrant's locator against its source and report what was
+/// hit, without spawning Lean, calling a judge, or touching the network.
+///
+/// A warrant pointing at the wrong passage produces a verdict about the wrong
+/// theorem, and no amount of judging recovers from that. Checking resolution
+/// on its own needs neither a Lean toolchain nor an API key, so it can gate a
+/// manifest before any expensive step runs.
+pub fn resolve_manifest(manifest_path: &Path) -> anyhow::Result<Vec<Resolution>> {
+    let raw = std::fs::read_to_string(manifest_path)
+        .with_context(|| format!("reading manifest {}", manifest_path.display()))?;
+    let manifest: Manifest = serde_json::from_str(&raw)
+        .with_context(|| format!("parsing manifest JSON {}", manifest_path.display()))?;
+    let manifest_dir = manifest_path.parent().unwrap_or_else(|| Path::new("."));
+
+    let mut loaded: std::collections::HashMap<String, Vec<ingest::Passage>> =
+        std::collections::HashMap::new();
+    for source in &manifest.sources {
+        let path = if source.content_list.is_absolute() {
+            source.content_list.clone()
+        } else {
+            manifest_dir.join(&source.content_list)
+        };
+        let (passages, _) = ingest::load_source(&path)?;
+        loaded.insert(source.id.clone(), passages);
+    }
+
+    manifest
+        .warrants
+        .iter()
+        .map(|warrant| {
+            let passages = loaded.get(&warrant.source_id).with_context(|| {
+                format!(
+                    "warrant for {:?} cites unknown source_id {:?}",
+                    warrant.decl, warrant.source_id
+                )
+            })?;
+            let hit = locator::resolve(passages, &warrant.locator);
+            Ok(Resolution {
+                decl: warrant.decl.clone(),
+                source_id: warrant.source_id.clone(),
+                locator: warrant.locator.clone(),
+                resolved: hit.map(|p| p.locator.clone()),
+                chars: hit.map_or(0, |p| p.text.chars().count()),
+                head: hit.map_or_else(String::new, |p| {
+                    p.text.lines().next().unwrap_or_default().to_string()
+                }),
+            })
+        })
+        .collect()
+}
+
 /// Run the full pipeline (ingest -> resolve -> Lean bridge -> entailment ->
 /// verdict) for every warrant in `manifest_path`, returning a [`Report`]
 /// carrying one [`Verdict`] per warrant plus what was read and what judged
