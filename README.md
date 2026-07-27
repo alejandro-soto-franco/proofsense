@@ -133,10 +133,28 @@ granularity hands it 7,617, a factor of 11.6. Section 6.3.1 alone runs to 12,555
 characters over three theorems, and the theorem a declaration there formalises
 is 1,304.
 
-What that buys has not been re-measured. The thirteen-pairing run above predates
-statement granularity, and whether the judge returns `equivalent` once handed the
-statement is an open measurement rather than a result. Until it is run, treat the
-zero above as a fact about section-granularity operands.
+That has now been measured, and `equivalent` still came back zero times. The
+reason is no longer operand scope at the section level.
+
+Twelve pairings were judged blind in July 2026 at statement granularity, nine
+real and three deliberate controls, twenty-four independent directional
+judgements. All three controls were refused in both directions at confidence
+0.94 to 0.99, while every real pairing's first direction sits at 0.60 to 0.91.
+The two populations do not overlap, so the four-way relation is separable on
+real operands and the judge marks subtle cases as subtle.
+
+The second direction came back false for all nine real pairings, and the
+rationales agree on why: a numbered theorem in these sources is a conjunction of
+several lettered parts, and a declaration typically formalises one of them. Asked
+whether it entails the whole theorem, the answer is correctly no. **The operand
+scope problem recurs one level down**, from section-versus-theorem to
+theorem-versus-part. Until a locator can name `§6.2.3 Thm 4(iii)`, a faithful
+formalisation of one conjunct cannot reach `equivalent` under `formalises`, and
+`follows_from` remains the accurate claim for it, recording `decl_specialises` as
+a clean pass at `Entailed`.
+
+`decl_exceeds` also stayed unreached: no pairing produced a false first direction
+with a true second.
 
 `EntailedFormal` and `Discharged` remain defined and unreachable. No code path
 produces either.
@@ -275,12 +293,22 @@ Entailment backends:
   earlier run had passed, and whether that is a real overclaim or a judge
   disagreement at the subtle end is open.
 
-  That run reached a model of the intended class through a separate harness
-  rather than through this code path, so what it measures is whether the four-way
+  A second run in July 2026, after statement granularity landed, judged twelve
+  pairings in both directions, nine real and three deliberate controls. All three
+  controls were refused at 0.94 to 0.99 against real pairings at 0.60 to 0.91,
+  with no overlap between the two populations. Six real pairings came back
+  `decl_specialises` and three `divergent`. On the one warrant with a known
+  divergence the judge named it unprompted, that the declaration quantifies its
+  variable over a strictly smaller space than the cited theorem requires, and
+  found a second weakening the earlier human audit had missed, that the estimate's
+  constant is quantified after the data it is supposed to be independent of.
+
+  Both runs reached a model of the intended class through a separate harness
+  rather than through this code path, so what they measure is whether the four-way
   relation is separable. The wired request, its schema and its token budget have
   been checked by reading them against the API reference and have not yet been
-  exercised against the live endpoint. The discrimination set is not in this
-  repository and does not run in CI.
+  exercised against the live endpoint. Neither discrimination set is in this
+  repository and neither runs in CI.
 
 ## Worked example
 
