@@ -59,6 +59,10 @@ pub struct SourceInfo {
     pub id: String,
     pub content_list_sha256: String,
     pub passage_count: usize,
+    /// Which parser produced the passages: `"content_list"` or `"markdown"`.
+    /// The two recover structure by different rules, so a passage count means
+    /// something different under each, and a report has to say which ran.
+    pub format: &'static str,
 }
 
 /// A complete run.
