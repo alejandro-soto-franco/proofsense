@@ -33,7 +33,7 @@ jobs:
     name: fmt, clippy, test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Floating stable, matching what release.yml installs. A new stable can
       # introduce a lint and turn this red on an unrelated push; that is the
