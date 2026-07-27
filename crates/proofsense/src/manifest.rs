@@ -56,6 +56,16 @@ pub struct Manifest {
     pub subject_imports: Vec<String>,
     pub warrants: Vec<Warrant>,
     pub sources: Vec<Source>,
+    /// Maps a Lean identifier to the function space it denotes, e.g.
+    /// `"H01": "H1_0"`. Used by [`crate::structure`] to compare the spaces a
+    /// passage names against those its declaration names.
+    ///
+    /// The table lives here rather than in the tool because the names are a
+    /// development's own vocabulary, and because its author is the one who can
+    /// be held to it. Absent, the structural comparison reports the passage's
+    /// spaces and none of the declaration's.
+    #[serde(default)]
+    pub space_map: crate::structure::SpaceMap,
 }
 
 #[cfg(test)]
