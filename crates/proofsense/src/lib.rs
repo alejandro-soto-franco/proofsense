@@ -101,11 +101,12 @@ pub fn run_check_with(
         };
         let bytes = std::fs::read(&content_list_path)
             .with_context(|| format!("reading content_list {}", content_list_path.display()))?;
-        let passages = ingest::load_passages(&content_list_path)?;
+        let (passages, format) = ingest::load_source(&content_list_path)?;
         sources.push(SourceInfo {
             id: source.id.clone(),
             content_list_sha256: hash::sha256_hex(&bytes),
             passage_count: passages.len(),
+            format: format.as_str(),
         });
         loaded.insert(source.id.clone(), passages);
     }
