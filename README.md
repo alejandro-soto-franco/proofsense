@@ -46,10 +46,15 @@ which is the case a binary verdict has no way to express.
 
 1. **Ingest.** Reviewable literature is OCR'd (MinerU) into a reading table: a
    structured, citable record of the source's definitions, hypotheses, and
-   theorem statements.
-2. **Resolve.** A warrant's locator (`§6.3.1`) is matched to a passage by string
-   equality after normalisation. No embeddings, no fuzzy matching, so resolution
-   is reproducible and inspectable.
+   theorem statements. Both of MinerU's outputs are read, `content_list.json`
+   and the Markdown export, dispatched by file extension. The Markdown export
+   carries no heading markers, so its structure is recovered from line form: a
+   section heading needs a dotted number of at least two components, which keeps
+   a numbered list item from opening a section.
+2. **Resolve.** A warrant's locator is matched to a passage by string equality
+   after normalisation. No embeddings, no fuzzy matching, so resolution is
+   reproducible and inspectable. A locator names either a section (`§6.3.1`) or
+   one statement inside it (`§6.3.1 Thm 1`).
 3. **Verbalise.** The Lean declaration under check is rendered into English by
    the deterministic fold described above.
 4. **Relate.** The rendered claim and the resolved passage are checked in both
@@ -117,19 +122,21 @@ A locator that names a section resolves to a passage carrying several theorems,
 remarks and definitions, and the second direction then asks one declaration to
 entail all of it. That is answered `false` almost always, so the relation
 collapses to `decl_specialises` whenever the first direction holds. Across the
-thirteen pairings described under `LlmEntailment` below, `equivalent` came back
-zero times.
+thirteen pairings described under `LlmEntailment` below, all judged against
+section-granularity passages, `equivalent` came back zero times.
 
-Two consequences hold today. Under `formalises` the check tops out at `Targeted`
-and reports `Understated` on faithful formalisations, so at this granularity that
-defect carries no information. `decl_exceeds` is out of reach for the same
-reason, which means an overclaim that also fails to cover the rest of the section
-lands as `divergent` and its overclaim signal is lost.
+A locator may now name the statement it means, `§6.3.1 Thm 1` rather than
+`§6.3.1`, which removes the operand-scope reason those two relations were out of
+reach. Measured over the nine warrants of a development checked against Evans,
+section granularity hands the judge 88,249 characters where statement
+granularity hands it 7,617, a factor of 11.6. Section 6.3.1 alone runs to 12,555
+characters over three theorems, and the theorem a declaration there formalises
+is 1,304.
 
-The fix is operand scope: compare against the statement the locator names rather
-than the whole section containing it. Until that lands, `follows_from` is the
-accurate claim for a warrant that means "this step is justified by the source",
-and it records `decl_specialises` as a clean pass at `Entailed`.
+What that buys has not been re-measured. The thirteen-pairing run above predates
+statement granularity, and whether the judge returns `equivalent` once handed the
+statement is an open measurement rather than a result. Until it is run, treat the
+zero above as a fact about section-granularity operands.
 
 `EntailedFormal` and `Discharged` remain defined and unreachable. No code path
 produces either.
@@ -208,7 +215,15 @@ PROOFSENSE_ENABLE_LLM=1 ANTHROPIC_API_KEY=... \
 
 # Skip spawning Lean by supplying a captured declaration record.
 cargo run -- check path/to/manifest.json --stub --lean-info decl.json
+
+# Check only that every locator resolves. No Lean, no judge, no network.
+cargo run -- resolve path/to/manifest.json
 ```
+
+`resolve` reports the passage each locator matched, its size in characters and
+its opening line, and exits non-zero on a miss. A warrant pointing at the wrong
+passage yields a verdict about the wrong theorem, and no amount of judging
+recovers from that, so this gates a manifest before any expensive step runs.
 
 Entailment backends:
 
@@ -263,12 +278,15 @@ the example resolves from a clean clone.
 Implemented and covered by tests: ingest, locator resolution, the Lean bridge,
 deterministic verbalisation, both entailment backends, the two directional checks
 and the relation derived from them, the warrant claim, rung and defect labelling,
-the report wrapper, and the end-to-end orchestrator. 48 tests, all offline.
+the report wrapper, and the end-to-end orchestrator. 65 tests, all offline.
+
+Three further tests pin the ingest against a real transcription. They are
+ignored by default and read their input from the environment, since the sources
+are copyrighted textbooks and stay out of this repository.
 
 Not yet implemented: the `EntailedFormal` and `Discharged` rungs are defined in
-the lattice and no code path produces them. `equivalent` and `decl_exceeds` are
-unreachable in practice against section-granularity passages, for the reason
-given above. Checking is statement-level, one warrant at a time, and does not
+the lattice and no code path produces them. Checking is statement-level, one
+warrant at a time, and does not
 descend into proof steps. The verbaliser's reading table covers core logical and
 order constants through checked name literals, plus a set of Mathlib head symbols
 matched by unchecked name literals, with everything else falling back to verbatim
