@@ -135,13 +135,28 @@ fn answer(holds: bool) -> Directional {
 
 /// A deliberately asymmetric backend. The stub cannot be one, so this is the
 /// only thing in the suite that can catch a transposed direction order.
+///
+/// It pins both halves of that order. The assertions inside `check` pin the
+/// *operands*, so swapping the orchestrator's call to
+/// `check(machine_english, passage)` fails here rather than silently
+/// recording direction B's answer under `source_entails_decl`. The
+/// asymmetric answers pin the *results*, so swapping the arguments to
+/// `Relation::derive` flips the two tests below.
 struct OneWay {
     source_entails_decl: bool,
     decl_entails_source: bool,
 }
 
 impl Entailment for OneWay {
-    fn check(&self, _passage: &str, _machine_english: &str) -> anyhow::Result<RelationCheck> {
+    fn check(&self, passage: &str, machine_english: &str) -> anyhow::Result<RelationCheck> {
+        assert!(
+            passage.contains("THEOREM 1"),
+            "operands transposed: the passage slot received {passage:?}"
+        );
+        assert!(
+            machine_english.starts_with("for all"),
+            "operands transposed: the machine-English slot received {machine_english:?}"
+        );
         Ok(RelationCheck {
             source_entails_decl: answer(self.source_entails_decl),
             decl_entails_source: answer(self.decl_entails_source),
