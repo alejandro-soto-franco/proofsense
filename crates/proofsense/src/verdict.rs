@@ -244,6 +244,15 @@ pub struct Verdict {
     pub machine_english: String,
     /// The resolved passage text the claim was checked against.
     pub target_passage: String,
+    /// Function spaces each side names, and how they differ.
+    ///
+    /// **Advisory, and no input to [`TrustRung`] or [`Defect`].** A set of
+    /// names carries no polarity: where Evans §6.3.1 Theorem 1 says "we do not
+    /// require `u ∈ H¹₀(U)`" and the declaration requires it, this reports the
+    /// two as agreeing. See [`crate::structure`]. Absent when the locator did
+    /// not resolve.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub spaces: Option<crate::structure::SpaceComparison>,
 }
 
 /// Render a [`Verdict`] as human-readable CLI text.
@@ -261,12 +270,23 @@ pub fn render_report(v: &Verdict) -> String {
         _ => String::new(),
     };
 
+    // Labelled as advisory in the output itself, so nobody reads a vocabulary
+    // difference as a finding. It sets no rung and carries no polarity.
+    let spaces = match &v.spaces {
+        Some(s) if !s.agrees() => format!(
+            "\nspaces (advisory, sets no rung): \
+             passage only {:?}, declaration only {:?}",
+            s.passage_only, s.decl_only
+        ),
+        _ => String::new(),
+    };
+
     format!(
         "warrant: {decl}\n\
          source: {source_id} ({locator})\n\
          claim: {claim}\n\
          relation: {relation}\n\
-         trust rung: {trust_rung}{defect}{directions}\n\
+         trust rung: {trust_rung}{defect}{spaces}{directions}\n\
          \n\
          machine english:\n  {machine_english}\n\
          \n\
@@ -316,7 +336,34 @@ mod tests {
             passage_sha256: Some("a1c9".to_string()),
             machine_english: "the machine english".to_string(),
             target_passage: "the passage text".to_string(),
+            spaces: None,
         }
+    }
+
+    /// The advisory line has to say so, so a vocabulary difference is never
+    /// read as a finding.
+    #[test]
+    fn render_report_marks_the_space_difference_as_advisory() {
+        let mut v = sample_verdict();
+        v.spaces = Some(crate::structure::SpaceComparison {
+            shared: vec!["L2".to_string()],
+            passage_only: vec!["H1".to_string()],
+            decl_only: vec![],
+        });
+        let out = render_report(&v);
+        assert!(out.contains("advisory, sets no rung"), "{out}");
+        assert!(out.contains("\"H1\""), "{out}");
+    }
+
+    #[test]
+    fn render_report_omits_the_space_line_when_the_sides_agree() {
+        let mut v = sample_verdict();
+        v.spaces = Some(crate::structure::SpaceComparison {
+            shared: vec!["L2".to_string()],
+            passage_only: vec![],
+            decl_only: vec![],
+        });
+        assert!(!render_report(&v).contains("spaces"));
     }
 
     #[test]

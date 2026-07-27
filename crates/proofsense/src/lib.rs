@@ -10,6 +10,7 @@ pub mod lean;
 pub mod locator;
 pub mod manifest;
 pub mod report;
+pub mod structure;
 pub mod verdict;
 
 use anyhow::Context;
@@ -197,6 +198,10 @@ pub fn run_check_with(
             None => lean::extract_decl(lean_dir, &warrant.decl, &manifest.subject_imports)?,
         };
 
+        let spaces = resolved.map(|passage| {
+            structure::compare(&passage.text, &lean_info.type_pp, &manifest.space_map)
+        });
+
         let (relation, source_entails_decl, decl_entails_source, target_passage, passage_sha256) =
             match resolved {
                 Some(passage) => {
@@ -240,6 +245,7 @@ pub fn run_check_with(
             passage_sha256,
             machine_english: lean_info.type_english,
             target_passage,
+            spaces,
         });
     }
 

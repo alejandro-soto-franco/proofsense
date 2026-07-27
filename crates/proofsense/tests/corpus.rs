@@ -126,3 +126,69 @@ fn the_statement_operand_is_an_order_of_magnitude_smaller_than_the_section() {
         "statement leaked into Theorem 2"
     );
 }
+
+fn interior_h2_space_map() -> proofsense::structure::SpaceMap {
+    [
+        ("H01", "H1_0"),
+        ("L2D", "L2"),
+        ("IsC1Coeff", "C1"),
+        ("Lp", "L2"),
+    ]
+    .into_iter()
+    .map(|(k, v)| (k.to_string(), v.to_string()))
+    .collect()
+}
+
+fn interior_h2_comparison() -> proofsense::structure::SpaceComparison {
+    let passages = load();
+    let thm = passages
+        .iter()
+        .find(|p| p.locator == "6.3.1 Thm 1")
+        .expect("no 6.3.1 Thm 1");
+    let captured = std::fs::read_to_string("tests/fixtures/interior_h2.leaninfo.json").unwrap();
+    let info = proofsense::lean::parse_decl_info(captured.trim()).unwrap();
+    proofsense::structure::compare(&thm.text, &info.type_pp, &interior_h2_space_map())
+}
+
+/// What the space inventory does surface, against real inputs on both sides:
+/// the transcribed Evans Theorem 1 and the captured Lean type of the
+/// declaration citing it.
+#[test]
+#[ignore = "needs a corpus that cannot be committed"]
+fn the_space_inventory_reports_vocabulary_the_declaration_never_names() {
+    let c = interior_h2_comparison();
+    println!("passage only: {:?}", c.passage_only);
+    println!("decl only   : {:?}", c.decl_only);
+    println!("shared      : {:?}", c.shared);
+
+    // Evans states the conclusion as `u ∈ H²_loc(U)` and the hypothesis over
+    // `H¹(U)`; the declaration expresses the conclusion through
+    // `HasWeakDerivOn` and norm bounds, naming neither space.
+    for space in ["H1", "H2", "H2_loc"] {
+        assert!(
+            c.passage_only.contains(&space.to_string()),
+            "{space} not reported as passage-only: {c:?}"
+        );
+    }
+
+    // The declaration draws on no space the passage leaves unmentioned.
+    assert!(c.decl_only.is_empty(), "unexpected decl-only: {c:?}");
+    assert!(!c.agrees());
+}
+
+/// The sharp limit, pinned against the real text so it cannot be forgotten.
+///
+/// Evans §6.3.1 Theorem 1 names `H¹₀(U)` exactly once, in Remark (i): "we do
+/// not require `u ∈ H¹₀(U)`". The declaration requires it. A set of names
+/// carries no polarity, so the check reports the two sides as *agreeing* on
+/// the one space where they most sharply differ. This is why nothing here may
+/// set a rung.
+#[test]
+#[ignore = "needs a corpus that cannot be committed"]
+fn a_denied_space_is_indistinguishable_from_a_required_one() {
+    let c = interior_h2_comparison();
+    assert!(
+        c.shared.contains(&"H1_0".to_string()),
+        "expected the polarity blind spot on H1_0: {c:?}"
+    );
+}
