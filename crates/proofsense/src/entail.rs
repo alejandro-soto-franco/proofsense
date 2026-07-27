@@ -90,17 +90,41 @@ fn salient_tokens(s: &str) -> HashSet<String> {
 /// a real entailment check, and must never claim otherwise.
 #[derive(Debug, Clone)]
 pub struct StubEntailment {
-    /// Minimum number of shared salient tokens for `holds` to be `true`.
-    /// Default (`3`) is chosen so that a related passage/claim pair, sharing
-    /// a handful of technical terms, clears the bar, while two unrelated
-    /// sentences do not.
-    pub min_shared_salient_tokens: usize,
+    /// Minimum fraction of the passage's salient tokens the machine English
+    /// must share for `holds` to be `true`.
+    ///
+    /// A fraction rather than a count, because the passage's size varies by an
+    /// order of magnitude: a statement locator resolves to roughly a tenth of
+    /// what a section locator does, and an absolute threshold loosens by that
+    /// factor without anything appearing to change. Under the old count of 3,
+    /// `interior_H2_estimate` pointed at Evans' *wave equation* came back
+    /// `Entailed`.
+    ///
+    /// The default (`0.08`) admits every true pairing and refuses three of
+    /// four cross-chapter mismatches, and **it does not separate the two
+    /// populations**. Measured 2026-07-27 over 8 true pairings and 7
+    /// deliberate mismatches from one textbook, at statement granularity:
+    ///
+    /// - true pairings: 0.086, 0.115, 0.119, 0.131, 0.137, 0.167, 0.184, 0.189
+    /// - cross-chapter: 0.063, 0.074, 0.077, **0.158**
+    /// - within-chapter: 0.14, 0.16, 0.20
+    ///
+    /// `dirichlet_weak_solution` pointed at Evans' wave-equation uniqueness
+    /// theorem scores 0.158, above five of the eight true pairings. No
+    /// threshold on this statistic separates them. At section granularity the
+    /// stub did refuse cross-chapter mismatches; shrinking the operand tenfold
+    /// removed even that, because a short passage shares too few tokens for
+    /// overlap to carry signal.
+    ///
+    /// This is a test double. Read a stub verdict as evidence that the
+    /// pipeline ran, never as evidence about a correspondence.
+    pub min_passage_coverage: f32,
 }
 
 impl Default for StubEntailment {
     fn default() -> Self {
         Self {
-            min_shared_salient_tokens: 3,
+            min_passage_coverage: 0.08,
         }
     }
 }
@@ -111,14 +135,19 @@ impl Entailment for StubEntailment {
         let hypothesis_tokens = salient_tokens(machine_english);
 
         let shared_count = hypothesis_tokens.intersection(&passage_tokens).count();
-        let hypothesis_len = hypothesis_tokens.len().max(1);
-        let confidence = (shared_count as f32 / hypothesis_len as f32).min(1.0);
-        let holds = shared_count >= self.min_shared_salient_tokens;
+        let passage_len = passage_tokens.len().max(1);
+        // Coverage of the *passage's* vocabulary, not a raw count. The passage
+        // is the operand whose size varies: a statement locator resolves to
+        // roughly a tenth of what a section locator does, and an absolute
+        // threshold silently loosens by that factor.
+        let confidence = (shared_count as f32 / passage_len as f32).min(1.0);
+        let holds = confidence >= self.min_passage_coverage;
 
         let rationale = format!(
-            "stub: {shared_count} shared salient token(s) against threshold {} \
-             (deterministic lexical-overlap test double, not a real check)",
-            self.min_shared_salient_tokens
+            "stub: {shared_count}/{passage_len} of the passage's salient tokens shared \
+             (coverage {confidence:.2} against threshold {:.2}; deterministic \
+             lexical-overlap test double, not a real check)",
+            self.min_passage_coverage
         );
 
         // Lexical overlap is symmetric, so the stub answers both directions

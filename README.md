@@ -192,6 +192,13 @@ proofsense's output.
 proofsense-lean` from the Lake project under `lean/`, so a Lean 4 toolchain and
 that project must both be present. A downloaded release binary carries neither.
 
+The Lake project requires the subject at a pinned revision, and **that pin
+decides what this tool reports**. Pinned one revision too early, the subject
+carried an `interior_H2_estimate` with drift-free hypotheses its author had
+already removed, so a run would have verbalised a superseded statement and
+re-reported findings the development had closed. Bump the pin whenever the
+subject's statements move.
+
 `--lean-info decl.json` is the one route that needs no Lean toolchain. It reads
 a declaration record captured earlier by whoever did have Lean available, as
 emitted by `lake exe proofsense-lean`.
@@ -231,14 +238,25 @@ Entailment backends:
   rather than a real check. It answers both directions identically by
   construction, so it returns only `equivalent` or `divergent` and the one-sided
   relations are invisible to it. Its rationale always begins with `stub:`, so a
-  stub verdict can never be mistaken for a judged one. Measured in July 2026 over
-  15 warrants drawn from a single textbook, it separates a declaration from a
-  different *chapter*, refusing 4 of 4, and fails completely within a chapter:
-  pointed at a neighbouring section of the same theory it accepted 3 of 3, with a
-  confidence distribution indistinguishable from the true matches, 0.39 against
-  0.39. Neighbouring results share their whole technical vocabulary, so lexical
-  overlap carries no signal there. That regime is the one that matters, and
-  handling it is the real judge's job.
+  stub verdict can never be mistaken for a judged one.
+
+  It scores the fraction of the passage's salient tokens the machine English
+  shares. A fraction rather than a count, because a statement locator resolves
+  to roughly a tenth of what a section locator does, and an absolute threshold
+  loosens by that factor without anything appearing to change. Under the count
+  it previously used, `interior_H2_estimate` pointed at Evans' *wave equation*
+  came back `Entailed`.
+
+  **It does not separate true pairings from mismatches.** Measured in July 2026
+  at statement granularity, over 8 true pairings and 7 deliberate mismatches
+  from one textbook: true pairings score 0.086 to 0.189, cross-chapter
+  mismatches 0.063, 0.074, 0.077 and **0.158**, within-chapter mismatches 0.14
+  to 0.20. A declaration pointed at a wave-equation uniqueness theorem outscores
+  five of the eight correct pairings. At section granularity the stub did refuse
+  cross-chapter mismatches, 4 of 4; shrinking the operand tenfold removed even
+  that, because a short passage shares too few tokens for overlap to carry
+  signal. Read a stub verdict as evidence that the pipeline ran, never as
+  evidence about a correspondence.
 - `LlmEntailment`: two calls per warrant, one per direction, speaking the
   Anthropic Messages API directly under a schema-constrained reply. Gated behind
   `PROOFSENSE_ENABLE_LLM`, which is what keeps the test suite offline: no test

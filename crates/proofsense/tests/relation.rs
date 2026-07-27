@@ -89,3 +89,24 @@ fn the_report_records_the_synthetic_source() {
     assert_eq!(report.sources[0].id, "synthetic");
     assert_eq!(report.sources[0].passage_count, 3);
 }
+
+/// The divergent fixture must diverge by a comfortable margin, not by a token
+/// or two. It previously shared `a` and `b` with the passage and cleared an
+/// absolute threshold of three only just; when the stub moved to a coverage
+/// rule that margin vanished and the case silently became `Equivalent`.
+#[test]
+fn the_divergent_fixture_shares_no_vocabulary_with_the_passage() {
+    let report = run("synthetic-manifest.json", "divergent.leaninfo.json");
+    let v = &report.verdicts[0];
+    let rationale = &v.source_entails_decl.as_ref().unwrap().rationale;
+
+    let shared: usize = rationale
+        .split_whitespace()
+        .find_map(|t| t.split('/').next()?.parse().ok())
+        .expect("stub rationale reports shared/total");
+
+    assert_eq!(
+        shared, 0,
+        "divergent fixture shares {shared} token(s) with the passage: {rationale}"
+    );
+}
