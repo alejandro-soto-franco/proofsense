@@ -11,10 +11,16 @@ rev = "542645ab80a3ee3a715ad8610b8c0fdac58ba54c"
 # Require the (unmodified) subject project so its compiled Environment is on the
 # search path at `lake exe` time. A git require rather than a local path, so the
 # worked example resolves for anyone who clones this repository.
+#
+# The revision matters to what this tool reports. Pinned at 7c3ebf21 the subject
+# carried a drift-free `interior_H2_estimate`, with `Op.b = 0` and `0 ≤ Op.c`
+# hypotheses its author removed on 2026-07-22. Verbalising that superseded
+# statement would have re-reported two findings the development had already
+# closed. Bump this whenever the subject's statements move.
 [[require]]
 name = "EllipticPdes"
 git = "https://github.com/alejandro-soto-franco/EllipticPDE.git"
-rev = "7c3ebf21ac0b72f7cc2975fd41fc14a51eddd73d"
+rev = "fea20bb08db87a267136a4480964a7c6adfd7806"
 subDir = "lean"
 
 # Library over the ProofsenseLean modules so multi-file imports (Main →
