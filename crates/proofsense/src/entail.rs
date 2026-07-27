@@ -91,9 +91,9 @@ fn salient_tokens(s: &str) -> HashSet<String> {
 #[derive(Debug, Clone)]
 pub struct StubEntailment {
     /// Minimum number of shared salient tokens for `holds` to be `true`.
-    /// Default (`3`) is chosen so that a genuinely related passage/claim
-    /// pair, sharing a handful of technical terms, clears the bar, while two
-    /// unrelated sentences do not.
+    /// Default (`3`) is chosen so that a related passage/claim pair, sharing
+    /// a handful of technical terms, clears the bar, while two unrelated
+    /// sentences do not.
     pub min_shared_salient_tokens: usize,
 }
 
@@ -179,7 +179,9 @@ const DEFAULT_EFFORT: &str = "high";
 
 /// Output budget. On Claude Opus 5 thinking runs by default and `max_tokens`
 /// bounds thinking and response text together, so this has to leave room for
-/// both. 16000 is the documented non-streaming default.
+/// both. `max_tokens` is required and carries no API-side default; 16000 is
+/// the documented recommendation for non-streaming requests, set to stay
+/// inside the SDK HTTP timeout.
 const MAX_TOKENS: u32 = 16000;
 
 /// Default confidence floor for the LLM judge. Below this, a direction is
@@ -189,8 +191,11 @@ const DEFAULT_CONFIDENCE_FLOOR: f32 = 0.5;
 const ANTHROPIC_VERSION: &str = "2023-06-01";
 
 /// A real NLI entailment backend, calling an LLM judge (default: the
-/// Anthropic Messages API) with `passage` as the premise and
-/// `machine_english` as the hypothesis.
+/// Anthropic Messages API) once per direction. The two calls swap the
+/// operands: the first asks whether `passage` entails `machine_english`, the
+/// second whether `machine_english` entails `passage`. The judge is never
+/// asked which relation holds; [`crate::verdict::Relation::derive`] settles
+/// that from the two answers.
 ///
 /// Rust has no official Anthropic SDK, so this speaks the Messages API
 /// directly over HTTP (`reqwest`, blocking). The call only happens when
@@ -396,8 +401,11 @@ struct DirectionalReply {
 
 /// Read one directional answer out of a Messages API response.
 ///
-/// A `stop_reason` of `refusal` is reported as a refusal carrying its
-/// category, rather than surfacing as a missing text block.
+/// Both terminal `stop_reason`s are named before the text block is read. A
+/// `refusal` is reported with its category rather than as a missing text
+/// block, and a `max_tokens` stop is reported as truncation rather than as
+/// malformed JSON, which is what the incomplete reply would otherwise look
+/// like.
 fn directional_from_response(parsed: MessagesResponse) -> anyhow::Result<Directional> {
     if parsed.stop_reason.as_deref() == Some("refusal") {
         let category = parsed
@@ -405,6 +413,14 @@ fn directional_from_response(parsed: MessagesResponse) -> anyhow::Result<Directi
             .and_then(|d| d.category)
             .unwrap_or_else(|| "unspecified".to_string());
         bail!("LlmEntailment: the judge returned a refusal (category {category})");
+    }
+
+    if parsed.stop_reason.as_deref() == Some("max_tokens") {
+        bail!(
+            "LlmEntailment: the judge's reply was truncated against the {MAX_TOKENS}-token \
+             budget (MAX_TOKENS), which thinking and response text share, so the JSON it \
+             returned is incomplete"
+        );
     }
 
     let text_block = parsed

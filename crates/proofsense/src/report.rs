@@ -14,7 +14,7 @@ use std::path::Path;
 /// the shape below.
 pub const SCHEMA: &str = "proofsense.report/1";
 
-/// One Lean package and the revision it was pinned at.
+/// One Lean package and its pinned revision.
 #[derive(Debug, Clone, Serialize)]
 pub struct LeanPackage {
     pub name: String,

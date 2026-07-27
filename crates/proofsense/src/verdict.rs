@@ -19,11 +19,16 @@ use std::fmt;
 ///
 /// - [`TrustRung::Bare`]: a citation only; no target passage resolved.
 /// - [`TrustRung::Targeted`]: the locator resolved to a specific
-///   transcribed passage (a concrete target), but no correspondence check
-///   has been run yet.
-/// - [`TrustRung::Entailed`]: the passage was entailment-checked against
-///   the machine English and passed. **Evidence-grade**: the default is
-///   LLM-NLI with the faithful operand pinned. This is evidence, not proof.
+///   transcribed passage, and the relation derived from the two directional
+///   answers falls short of the warrant's claim. A [`Defect`] accompanies it
+///   in every case except [`Relation::Undetermined`], so this rung reads as
+///   "checked, and here is what the check found". Every finding of
+///   misattribution lands here.
+/// - [`TrustRung::Entailed`]: the derived relation supports what the warrant
+///   claims: [`Relation::Equivalent`] under either claim, or
+///   [`Relation::DeclSpecialises`] under [`Claim::FollowsFrom`].
+///   **Evidence-grade**: the default is LLM-NLI with the faithful operand
+///   pinned. This is evidence, not proof.
 /// - [`TrustRung::EntailedFormal`]: the passage was re-autoformalised and
 ///   discharged equivalent to the decl in-kernel (**formal-evidence-grade**:
 ///   a round-trip check, Increment 2 of the plan). Stronger than
@@ -79,6 +84,16 @@ pub struct Directional {
 
 /// How a declaration stands to the passage it cites. Derived from the two
 /// directional answers, never asked for directly.
+///
+/// Every reading below assumes the passage is the cited *statement*. Where a
+/// locator resolves to a whole section carrying several theorems, remarks and
+/// definitions, the second direction asks one declaration to entail all of
+/// it, which is answered `false` almost always. That collapses
+/// [`Relation::Equivalent`] into [`Relation::DeclSpecialises`] and puts
+/// [`Relation::DeclExceeds`] out of reach. Measured over thirteen blind
+/// pairings against section-granularity passages, `Equivalent` came back
+/// zero times. Against a section, read `DeclSpecialises` as "the section says
+/// more", a fact about the operand rather than about the declaration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Relation {
     /// Each entails the other: the declaration states the cited result.
@@ -143,7 +158,9 @@ impl Relation {
 /// misattribution never has to present itself as weak evidence.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Defect {
-    /// The declaration is weaker than the result it cites.
+    /// The declaration is weaker than the result it cites. Subject to the
+    /// operand-granularity caveat on [`Relation`]: against a section-wide
+    /// passage this fires on faithful formalisations too.
     Understated,
     /// The declaration is stronger than the source supports.
     Overclaimed,
@@ -215,7 +232,7 @@ pub struct Verdict {
     /// did not resolve.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub decl_entails_source: Option<Directional>,
-    /// Axioms the checked declaration depends on.
+    /// The checked declaration's axiom dependencies.
     pub decl_axioms: Vec<String>,
     /// Whether the declaration's proof is free of `sorry`.
     pub sorry_free: bool,
