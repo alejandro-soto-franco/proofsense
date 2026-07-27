@@ -1,13 +1,14 @@
 # proofsense
 
-proofsense is a proof-linter: it checks that a Lean 4 proof corresponds to the
-literature it claims to formalise.
+proofsense checks that a Lean 4 declaration states the theorem it cites, and
+reports how the two stand to each other.
 
-A Lean proof can typecheck and still misrepresent its source: a hypothesis
-silently strengthened, a step that cites a lemma the source never states, an
+Formal verification establishes that a proof proves its statement. It
+establishes nothing about whether that statement is the theorem the author says
+it is, and that second link is where a formalisation goes wrong: a hypothesis
+silently strengthened, a step citing a lemma the source never states, an
 inequality with the wrong direction. Lean answers "does this typecheck".
-proofsense targets the other question, "does this match what the ingested paper
-actually says".
+proofsense answers "is this the result the cited literature actually proves".
 
 ## Why the generator is separated from the judge
 
@@ -25,14 +26,21 @@ reading table. Any subterm no rule matches is rendered verbatim through
 `ppExpr`, so the fold is total: it degrades to less English, never to a different
 claim. It is pure metaprogramming, with no network and no model involved.
 
-The fold keeps every binder the statement refers to. A `Prop` hypothesis reads as
-an implication only when the body does not mention it; when the body projects out
-of it, the hypothesis is named instead, so no identifier appears in the English
-without having been introduced.
+The fold keeps every binder to which the statement refers. A `Prop` hypothesis
+reads as an implication only when the body does not mention it; when the body
+projects out of it, the hypothesis is named instead, so no identifier appears in
+the English without having been introduced.
 
 The judge therefore never writes the claim. It only decides whether the source
 supports a claim derived mechanically from the term under check. A wrong
 judgement stays a wrong judgement; it cannot become a wrong reading of the Lean.
+
+The judge is never asked which relation holds either. It answers one direction
+at a time: does the passage entail the declaration, and, as a separate call,
+does the declaration entail the passage. proofsense derives the relation from
+the two answers. Asking for the relation directly lets a single call report
+"matches" for a declaration that quietly assumes more than the source gives,
+which is the case a binary verdict has no way to express.
 
 ## Pipeline
 
@@ -44,8 +52,50 @@ judgement stays a wrong judgement; it cannot become a wrong reading of the Lean.
    is reproducible and inspectable.
 3. **Verbalise.** The Lean declaration under check is rendered into English by
    the deterministic fold described above.
-4. **Entail.** The rendered claim is checked against the resolved passage.
-5. **Label.** The warrant is assigned a rung on the trust ladder.
+4. **Relate.** The rendered claim and the resolved passage are checked in both
+   directions, and the relation between them is derived from the two answers.
+5. **Label.** The relation is mapped, against what the warrant claims, to a rung
+   on the trust ladder and an optional defect.
+
+## What a warrant claims, and the relation
+
+A warrant names a declaration, a source and a locator, and declares what it
+claims about the correspondence:
+
+| `claim` | Reading |
+|---|---|
+| `formalises` | this declaration *is* the cited theorem |
+| `follows_from` | this step is justified by the source |
+
+The field defaults to `formalises`, the stricter reading, so an unstated claim is
+never the lenient one.
+
+The two directional answers give four relations, and a fifth for an answer below
+the judge's confidence floor:
+
+| Relation | Meaning |
+|---|---|
+| `equivalent` | each entails the other: the declaration states the cited result |
+| `decl_specialises` | the source entails the declaration only: a special case of the cited result |
+| `decl_exceeds` | the declaration entails the source only: it claims more than the source supports |
+| `divergent` | neither direction holds |
+| `undetermined` | a direction came back below the confidence floor |
+
+The same relation classifies differently under each claim, which is the reason
+the claim is recorded at all:
+
+| Relation | `formalises` | `follows_from` |
+|---|---|---|
+| `equivalent` | `Entailed` | `Entailed` |
+| `decl_specialises` | `Targeted` + `Understated` | `Entailed` |
+| `decl_exceeds` | `Targeted` + `Overclaimed` | `Targeted` + `Overclaimed` |
+| `divergent` | `Targeted` + `Unsupported` | `Targeted` + `Unsupported` |
+| `undetermined` | `Targeted` | `Targeted` |
+| locator unresolved | `Bare` | `Bare` |
+
+A defect is a positive finding, recorded separately from the rung so that the
+rung stays a monotone strength label and a finding of misattribution never has to
+present itself as weak evidence.
 
 ## The trust ladder
 
@@ -56,20 +106,66 @@ preference.
 | Rung | Meaning |
 |---|---|
 | `Bare` | A citation only. The locator resolved to no passage. |
-| `Targeted` | The locator resolved to a specific passage, entailment unconfirmed. |
-| `Entailed` | The passage was entailment-checked against the rendered claim and supported it. |
+| `Targeted` | The locator resolved and a relation was derived, and the relation falls short of what the warrant claims. A defect accompanies it in every case except `undetermined`. |
+| `Entailed` | The derived relation supports the claim: `equivalent` under either claim, or `decl_specialises` under `follows_from`. |
 | `EntailedFormal` | The passage was re-autoformalised and checked for equivalence. Still not unconditional: two-statement equivalence is undecidable in general. |
 | `Discharged` | A Lean proof of the declaration exists, so the English is generated from a kernel-checked term. |
+
+### What the ladder currently reaches
+
+A locator that names a section resolves to a passage carrying several theorems,
+remarks and definitions, and the second direction then asks one declaration to
+entail all of it. That is answered `false` almost always, so the relation
+collapses to `decl_specialises` whenever the first direction holds. Across the
+thirteen pairings described under `LlmEntailment` below, `equivalent` came back
+zero times.
+
+Two consequences hold today. Under `formalises` the check tops out at `Targeted`
+and reports `Understated` on faithful formalisations, so at this granularity that
+defect carries no information. `decl_exceeds` is out of reach for the same
+reason, which means an overclaim that also fails to cover the rest of the section
+lands as `divergent` and its overclaim signal is lost.
+
+The fix is operand scope: compare against the statement the locator names rather
+than the whole section containing it. Until that lands, `follows_from` is the
+accurate claim for a warrant that means "this step is justified by the source",
+and it records `decl_specialises` as a clean pass at `Entailed`.
+
+`EntailedFormal` and `Discharged` remain defined and unreachable. No code path
+produces either.
 
 ## What is and isn't guaranteed
 
 Verbalisation is faithful by construction: the English is a direct function of
 the Lean declaration, so it cannot introduce claims the proof does not make.
 
-The entailment check is evidence-grade, not a soundness proof. It reports whether
-a judge finds the source consistent with the rendered claim, and that judgement
-can be wrong in either direction. proofsense flags mismatches for human review.
-It does not certify correctness.
+The entailment check is evidence-grade, not a soundness proof. It reports what a
+judge made of each direction, and either answer can be wrong. Deriving the
+relation from two answers removes one failure mode, a single call reporting
+"matches" for a declaration that assumes more than the source gives. The answers
+themselves stay as reliable as the judge. proofsense flags mismatches for human
+review. It does not certify correctness.
+
+## The report
+
+A run returns a `proofsense.report/1` document rather than a list of verdicts.
+It pins what was read and what judged it:
+
+- the SHA-256 of the manifest bytes;
+- the Lean toolchain, the subject package and its revision, and every package
+  revision the Lake manifest pins;
+- per source, the SHA-256 of the content-list bytes and the passage count;
+- per verdict, the SHA-256 of the resolved passage text, the declaration's axiom
+  dependencies, and whether its proof is free of `sorry`;
+- the judge: kind, model, effort, confidence floor, and the SHA-256 of the prompt
+  template, since a prompt change alters verdicts and has to be visible.
+
+The judge block is filled in by whichever backend ran, so a report cannot
+describe a judge that never ran. A stub run carries no model, effort or prompt
+hash at all.
+
+Signing is out of scope. A detached signature over the document needs no schema
+change.
 
 ## Trusted computing base
 
@@ -78,8 +174,7 @@ Results are only as good as three components proofsense does not itself verify:
 - **The reading table**: its coverage, and its transcription of the source.
 - **MinerU OCR fidelity**: the accuracy of the ingest step that produces the
   reading table from source documents.
-- **The entailment judge**: the model or procedure deciding whether the reading
-  table supports the rendered claim.
+- **The entailment judge**: the model or procedure deciding each direction.
 
 A false negative or false positive in any of the three propagates into
 proofsense's output.
@@ -101,7 +196,7 @@ whether Lean is spawned.
 ## Usage
 
 A manifest names the sources, the Lean imports to elaborate under, and the
-warrants (a declaration plus the locator it claims to formalise).
+warrants (a declaration, the locator it cites, and what it claims about it).
 
 ```
 # Deterministic and offline: uses the lexical stub judge.
@@ -117,27 +212,42 @@ cargo run -- check path/to/manifest.json --stub --lean-info decl.json
 
 Entailment backends:
 
-- `StubEntailment`: a deterministic lexical-overlap heuristic. A test double, not
-  a real check. Its rationale always begins with `stub:`, so a stub verdict can
-  never be mistaken for a judged one. Measured over 15 warrants drawn from a
-  single textbook, it separates a declaration from a different *chapter*
-  (4 of 4 correctly refused) and fails completely within a chapter: pointed at a
-  neighbouring section of the same theory it returned `entailed` 3 times out of 3,
-  with a confidence distribution indistinguishable from the true matches (0.39
-  against 0.39). Neighbouring results share their whole technical vocabulary, so
-  lexical overlap carries no signal there. That regime is the one that matters,
-  and it is what the real judge is for.
-- `LlmEntailment`: an NLI call to an LLM judge, speaking the Anthropic Messages
-  API directly. Gated behind `PROOFSENSE_ENABLE_LLM`, which is what keeps the
-  test suite fully offline: no test sets that variable. Measured on the same 13
-  warrants as the stub, judged blind: it refused every near-miss and every
-  out-of-chapter pairing, 6 of 6, at confidence 0.95 to 0.98, where the stub
-  accepted all three near-misses. It also refused 3 of the 7 pairings that had
-  been labelled correct, and on inspection it was right about all three: one
-  declaration adds hypotheses the cited theorem does not carry, and two state
-  lemmas used inside a proof rather than the theorem the section states. The
-  confidence split is informative in itself: clear mismatches came back at 0.95
-  and above, the two subtle ones at 0.65 and 0.68.
+- `StubEntailment`: a deterministic lexical-overlap heuristic, and a test double
+  rather than a real check. It answers both directions identically by
+  construction, so it returns only `equivalent` or `divergent` and the one-sided
+  relations are invisible to it. Its rationale always begins with `stub:`, so a
+  stub verdict can never be mistaken for a judged one. Measured in July 2026 over
+  15 warrants drawn from a single textbook, it separates a declaration from a
+  different *chapter*, refusing 4 of 4, and fails completely within a chapter:
+  pointed at a neighbouring section of the same theory it accepted 3 of 3, with a
+  confidence distribution indistinguishable from the true matches, 0.39 against
+  0.39. Neighbouring results share their whole technical vocabulary, so lexical
+  overlap carries no signal there. That regime is the one that matters, and
+  handling it is the real judge's job.
+- `LlmEntailment`: two calls per warrant, one per direction, speaking the
+  Anthropic Messages API directly under a schema-constrained reply. Gated behind
+  `PROOFSENSE_ENABLE_LLM`, which is what keeps the test suite offline: no test
+  sets that variable.
+
+  Measured in July 2026 over thirteen pairings judged blind, labels withheld and
+  ids re-keyed by hash so the ordering carried no signal. Six of six authored
+  mismatches were refused as `divergent` at confidence 0.90 to 0.97, with no
+  false positives. Five of the seven real pairings came back `decl_specialises`,
+  sitting at 0.70 to 0.72 on the first direction against 0.90 and above for the
+  mismatches, so the judge marks the subtle cases as subtle, which is what a
+  trust rung needs. One of those five is a known misattribution, and it reported
+  `decl_specialises` from the verdict itself, refusing the second direction on
+  the remark that had previously been caught only by a human reading the source.
+  The remaining two real pairings came back `divergent`; one is a warrant an
+  earlier run had passed, and whether that is a real overclaim or a judge
+  disagreement at the subtle end is open.
+
+  That run reached a model of the intended class through a separate harness
+  rather than through this code path, so what it measures is whether the four-way
+  relation is separable. The wired request, its schema and its token budget have
+  been checked by reading them against the API reference and have not yet been
+  exercised against the live endpoint. The discrimination set is not in this
+  repository and does not run in CI.
 
 ## Worked example
 
@@ -151,15 +261,22 @@ the example resolves from a clean clone.
 ## Status
 
 Implemented and covered by tests: ingest, locator resolution, the Lean bridge,
-deterministic verbalisation, both entailment backends, verdict labelling, and the
-end-to-end orchestrator. 15 tests, all offline.
+deterministic verbalisation, both entailment backends, the two directional checks
+and the relation derived from them, the warrant claim, rung and defect labelling,
+the report wrapper, and the end-to-end orchestrator. 48 tests, all offline.
 
 Not yet implemented: the `EntailedFormal` and `Discharged` rungs are defined in
-the lattice but no code path produces them. Checking is statement-level, one
-warrant at a time, and does not descend into proof steps. The verbaliser's
-reading table covers core logical and order constants through checked name
-literals, plus a set of Mathlib head symbols matched by unchecked name literals,
-with everything else falling back to verbatim pretty-printing.
+the lattice and no code path produces them. `equivalent` and `decl_exceeds` are
+unreachable in practice against section-granularity passages, for the reason
+given above. Checking is statement-level, one warrant at a time, and does not
+descend into proof steps. The verbaliser's reading table covers core logical and
+order constants through checked name literals, plus a set of Mathlib head symbols
+matched by unchecked name literals, with everything else falling back to verbatim
+pretty-printing.
+
+Two gaps worth naming: reports serialise and match the published contract, and
+nothing reads one back yet; and the live endpoint has never been called through
+this code path.
 
 ## Licence
 
