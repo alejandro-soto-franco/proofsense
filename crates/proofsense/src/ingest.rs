@@ -224,6 +224,68 @@ fn markdown_section_number(line: &str) -> Option<String> {
     Some(number.to_string())
 }
 
+/// Parse a section heading carrying an UNDOTTED number: `2 Upper bound for the
+/// Infimum`, the form papers set their sections in.
+///
+/// Papers number sections at one level where textbooks number at three, so the
+/// rule above finds nothing in an arXiv source and every locator into one
+/// misses. Admitting a single number is what pulls in numbered list items, and
+/// the trailing dot is what separates the two: an enumerator is written `1.`
+/// and a paper's section number is not. Requiring its ABSENCE therefore admits
+/// the heading and rejects the list, where requiring a dotted depth cannot.
+/// Measured on `schygulla-2011-wil-min-pre`, whose four sections and three
+/// enumerated conditions both number from one: the undotted form selects the
+/// four and none of the three.
+///
+/// A title must follow and must open with a capital, which is how a heading is
+/// set and how a sentence fragment carrying a leading numeral is not.
+fn markdown_section_number_loose(line: &str) -> Option<String> {
+    let trimmed = line.trim();
+    let run: String = trimmed
+        .chars()
+        .take_while(|c| c.is_ascii_digit() || *c == '.')
+        .collect();
+    if run.is_empty() || run.ends_with('.') {
+        return None;
+    }
+    let rest = &trimmed[run.len()..];
+
+    // A capitalised title must follow, separated by whitespace.
+    if !rest.starts_with(char::is_whitespace) {
+        return None;
+    }
+    if !rest
+        .trim_start()
+        .starts_with(|c: char| c.is_ascii_uppercase())
+    {
+        return None;
+    }
+    if run.split('.').any(|p| p.is_empty()) {
+        return None;
+    }
+    Some(run)
+}
+
+/// The components of a dotted section number, for ordering candidate headings.
+/// A component that does not parse drops out, so a malformed number orders by
+/// what it does carry rather than panicking.
+fn section_number_key(number: &str) -> Vec<u32> {
+    number.split('.').filter_map(|p| p.parse().ok()).collect()
+}
+
+/// Is a candidate heading sequence strictly increasing, read as dotted numbers.
+///
+/// This is the test the strict rule was justified by: on Evans it yields 232
+/// headings with zero non-monotone transitions, while admitting single numbers
+/// interleaves 262 list items among them and the sequence stops increasing. So
+/// the same test decides when the looser form is safe, rather than a second
+/// hand-tuned rule.
+fn strictly_increasing(numbers: &[String]) -> bool {
+    numbers
+        .windows(2)
+        .all(|w| section_number_key(&w[0]) < section_number_key(&w[1]))
+}
+
 /// Parse a statement marker of the form `THEOREM 1 (Interior H 2-regularity).`
 /// Returns the locator abbreviation and the statement number.
 ///
@@ -231,20 +293,47 @@ fn markdown_section_number(line: &str) -> Option<String> {
 /// section passage that contains them.
 fn markdown_statement_marker(line: &str) -> Option<(&'static str, String)> {
     let trimmed = line.trim();
-    let (word, abbrev) = STATEMENT_MARKERS
-        .iter()
-        .find(|(word, _)| trimmed.len() > word.len() && trimmed.starts_with(word))?;
-    let rest = trimmed[word.len()..].trim_start();
-    if rest.len() == trimmed[word.len()..].len() {
+    // Textbooks set the marker in caps, which is how MinerU transcribes the
+    // running head; papers set it in title case and number it by section, as
+    // `Lemma 2.1`. Both are taken, and a lowercase `theorem` is not, so a
+    // sentence resuming mid-clause does not open a statement.
+    let (word, abbrev) = STATEMENT_MARKERS.iter().find_map(|(word, abbrev)| {
+        let title = title_case(word);
+        if trimmed.len() > word.len() && trimmed.starts_with(word) {
+            Some((word.len(), *abbrev))
+        } else if trimmed.len() > title.len() && trimmed.starts_with(&title) {
+            Some((title.len(), *abbrev))
+        } else {
+            None
+        }
+    })?;
+    let after = &trimmed[word..];
+    let rest = after.trim_start();
+    if rest.len() == after.len() {
         // No whitespace separated the marker from what follows, so this is a
         // longer word that merely starts with the marker.
         return None;
     }
-    let number: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
-    if number.is_empty() {
+    // A paper numbers by section, so the number may be dotted. Any trailing
+    // separator is dropped so `Lemma 2.1.` and `Lemma 2.1` give one locator.
+    let run: String = rest
+        .chars()
+        .take_while(|c| c.is_ascii_digit() || *c == '.')
+        .collect();
+    let number = run.trim_end_matches('.');
+    if number.is_empty() || !number.starts_with(|c: char| c.is_ascii_digit()) {
         return None;
     }
-    Some((abbrev, number))
+    Some((abbrev, number.to_string()))
+}
+
+/// `THEOREM` to `Theorem`, for the title-case form papers use.
+fn title_case(word: &str) -> String {
+    let mut chars = word.chars();
+    match chars.next() {
+        Some(first) => first.to_string() + &chars.as_str().to_lowercase(),
+        None => String::new(),
+    }
 }
 
 /// A line opening a proof, which is where a statement ends.
@@ -332,11 +421,31 @@ pub fn load_passages_markdown(path: &Path) -> anyhow::Result<Vec<Passage>> {
 fn parse_markdown(raw: &str) -> Vec<Passage> {
     let lines: Vec<&str> = raw.lines().collect();
 
-    let heads: Vec<(usize, String)> = lines
+    // Prefer the strict form. Fall back to the single-number form only when the
+    // document's own numbering vouches for it by increasing throughout, which a
+    // numbered list interleaved with real sections never does. A source whose
+    // strict headings already cover it is left exactly as it was.
+    let strict: Vec<(usize, String)> = lines
         .iter()
         .enumerate()
         .filter_map(|(i, line)| markdown_section_number(line).map(|n| (i, n)))
         .collect();
+
+    let heads: Vec<(usize, String)> = if strict.is_empty() {
+        let loose: Vec<(usize, String)> = lines
+            .iter()
+            .enumerate()
+            .filter_map(|(i, line)| markdown_section_number_loose(line).map(|n| (i, n)))
+            .collect();
+        let numbers: Vec<String> = loose.iter().map(|(_, n)| n.clone()).collect();
+        if loose.len() > 1 && strictly_increasing(&numbers) {
+            loose
+        } else {
+            strict
+        }
+    } else {
+        strict
+    };
 
     let mut passages = Vec::new();
 
@@ -564,5 +673,159 @@ Nothing of substance here.
         );
         assert_eq!(SourceFormat::ContentList.as_str(), "content_list");
         assert_eq!(SourceFormat::Markdown.as_str(), "markdown");
+    }
+
+    /// An arXiv paper, whose sections carry one number and no trailing dot.
+    const MARKDOWN_PAPER: &str = "\
+1 Introduction
+
+Prose that belongs to the introduction.
+
+2 Upper bound for the Infimum
+
+THEOREM 1 (Fictional bound). The infimum is below the double sphere.
+
+Proof. Immediate.
+
+3 Convergence
+
+Closing prose.
+";
+
+    #[test]
+    fn paper_sections_resolve_when_their_numbering_increases() {
+        let passages = parse_markdown(MARKDOWN_PAPER);
+        let locators: Vec<&str> = passages.iter().map(|p| p.locator.as_str()).collect();
+        assert!(locators.contains(&"1"), "got {locators:?}");
+        assert!(locators.contains(&"2"), "got {locators:?}");
+        assert!(locators.contains(&"3"), "got {locators:?}");
+        // The statement inside a paper section is addressable too, which is the
+        // granularity a warrant needs.
+        assert!(locators.contains(&"2 Thm 1"), "got {locators:?}");
+        assert!(passage(&passages, "2 Thm 1")
+            .text
+            .contains("below the double sphere"));
+    }
+
+    #[test]
+    fn a_textbook_is_parsed_exactly_as_before() {
+        // The strict rule finds headings here, so the fallback never runs and
+        // the numbered list inside the proof stays out of the heading set.
+        let passages = parse_markdown(FIXTURE);
+        let sections: Vec<&str> = passages
+            .iter()
+            .map(|p| p.locator.as_str())
+            .filter(|l| !l.contains(' '))
+            .collect();
+        assert_eq!(sections, vec!["4.2.1", "4.2.2"]);
+    }
+
+    #[test]
+    fn a_numbered_list_that_restarts_opens_no_sections() {
+        let listing = "1. First item\n\n2. Second item\n\n1. Restarting item\n\nProse.\n";
+        let passages = parse_markdown(listing);
+        assert!(passages.is_empty(), "got {passages:?}");
+    }
+
+    #[test]
+    fn an_increasing_enumeration_is_still_not_a_section_list() {
+        // The case that defeated the first version of this fallback: an
+        // enumeration numbering from one, increasing, and so indistinguishable
+        // from a paper's sections by monotonicity alone. The trailing dot
+        // rejects it.
+        let listing = "1. First item\n\n2. Second item\n\n3. Third item\n\nProse.\n";
+        assert!(parse_markdown(listing).is_empty());
+    }
+
+    #[test]
+    fn a_paper_mixing_sections_and_an_enumeration_keeps_only_the_sections() {
+        // schygulla-2011-wil-min-pre in miniature: sections and an enumerated
+        // list both numbering from one, in the same document.
+        let mixed = "1 Introduction\n\nProse.\n\n2 Upper bound\n\n\
+1. The sets are discs.\n\n2. The map is smooth.\n\n3 Convergence\n\nMore.\n";
+        let passages = parse_markdown(mixed);
+        let locators: Vec<&str> = passages.iter().map(|p| p.locator.as_str()).collect();
+        assert_eq!(locators, vec!["1", "2", "3"]);
+    }
+
+    #[test]
+    fn the_loose_form_takes_a_single_number_with_or_without_a_dot() {
+        assert_eq!(
+            markdown_section_number_loose("2 Upper bound for the Infimum"),
+            Some("2".to_string())
+        );
+        // The trailing dot marks an enumerator, so the dotted forms are
+        // rejected here however deep they are. That is the whole discriminator.
+        assert_eq!(markdown_section_number_loose("2. Upper bound"), None);
+        assert_eq!(
+            markdown_section_number_loose("1. The sets are topological discs."),
+            None
+        );
+        assert_eq!(
+            markdown_section_number_loose("4.2.1. Fictional regularity."),
+            None
+        );
+        // A bare number with no title is not a heading, nor is a lowercase
+        // continuation carrying a leading numeral.
+        assert_eq!(markdown_section_number_loose("2"), None);
+        assert_eq!(markdown_section_number_loose("Introduction"), None);
+        assert_eq!(
+            markdown_section_number_loose("2 of the sets are discs"),
+            None
+        );
+    }
+
+    #[test]
+    fn statement_markers_are_taken_in_caps_and_in_title_case() {
+        // The textbook form.
+        assert_eq!(
+            markdown_statement_marker("THEOREM 1 (Interior bound)."),
+            Some(("Thm", "1".to_string()))
+        );
+        // The paper form, numbered by section.
+        assert_eq!(
+            markdown_statement_marker("Lemma 2.1 The function is decreasing"),
+            Some(("Lem", "2.1".to_string()))
+        );
+        assert_eq!(
+            markdown_statement_marker("Theorem 1.1. Existence holds."),
+            Some(("Thm", "1.1".to_string()))
+        );
+        // A lowercase marker is prose resuming, not a statement opening.
+        assert_eq!(markdown_statement_marker("theorem 2.1 gives this"), None);
+        // A marker with no number stays reachable through its section only.
+        assert_eq!(markdown_statement_marker("Lemma (unnumbered)"), None);
+    }
+
+    #[test]
+    fn a_paper_statement_is_a_far_smaller_operand_than_its_section() {
+        let mixed = "1 Introduction\n\nProse.\n\n2 Upper bound\n\n\
+Some framing prose that belongs to the section and not to the lemma.\n\n\
+Lemma 2.1 The function is decreasing and bounded above.\n\n\
+Proof. Immediate.\n\n3 Convergence\n\nMore.\n";
+        let passages = parse_markdown(mixed);
+        let section = passage(&passages, "2").text.len();
+        let statement = passage(&passages, "2 Lem 2.1").text.len();
+        assert!(
+            statement < section,
+            "statement {statement} should be smaller than section {section}"
+        );
+        assert!(passage(&passages, "2 Lem 2.1")
+            .text
+            .contains("decreasing and bounded"));
+    }
+
+    #[test]
+    fn monotonicity_is_what_separates_sections_from_a_list() {
+        let sections: Vec<String> = ["6.3.1", "6.3.2", "6.4"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert!(strictly_increasing(&sections));
+        let interleaved: Vec<String> = ["6.3.1", "1", "6.3.2"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert!(!strictly_increasing(&interleaved));
     }
 }
